@@ -1,0 +1,5 @@
+vendor/
+.phpunit.result.cache
+.phpstan.cache
+tests/fixtures/tmp/
+demo/files/

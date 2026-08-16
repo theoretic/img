@@ -1,0 +1,24 @@
+# Drop in at webroot/api/img/.htaccess
+
+# ProcessWire >= 3.0.135 denies execution of any php file under /site and
+# /site/assets, so index.php has to be granted explicitly.
+<FilesMatch "index\.php$">
+	<IfModule mod_authz_core.c>
+		Require all granted
+	</IfModule>
+	<IfModule !mod_authz_core.c>
+		Allow from all
+	</IfModule>
+</FilesMatch>
+
+# The request path is the only thing the endpoint takes from the URL.
+#
+# QSD discards the client's query string: with QSA, Apache appended it after the
+# rewritten one, so /api/img/photo.jpg?request=../../../etc/passwd arrived with
+# two `request` parameters and PHP kept the client's.
+#
+# B escapes $1 before substitution, so an `&` left in the path cannot split into
+# extra parameters of its own.
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-s
+RewriteRule ^(.*)$ index.php?request=$1 [B,QSD,L]

@@ -1,0 +1,76 @@
+<?php
+
+/**
+ * Minimal ext-imagick surface, so static analysis works on hosts that do not
+ * have the extension installed. Only the members this package touches.
+ */
+class Imagick
+{
+    public const INTERLACE_PLANE = 2;
+
+    // MagickCore order: Undefined, Area, Disk, File, Map, Memory, Thread,
+    // Throttle, Time. Wrong values here would set the disk and thread limits
+    // instead of map, memory and time.
+    public const RESOURCETYPE_AREA = 1;
+    public const RESOURCETYPE_DISK = 2;
+    public const RESOURCETYPE_FILE = 3;
+    public const RESOURCETYPE_MAP = 4;
+    public const RESOURCETYPE_MEMORY = 5;
+    public const RESOURCETYPE_THREAD = 6;
+    public const RESOURCETYPE_THROTTLE = 7;
+    public const RESOURCETYPE_TIME = 8;
+
+    public function __construct(mixed $files = null) {}
+
+    public function autoOrientImage(): bool {}
+
+    public function stripImage(): bool {}
+
+    public function thumbnailImage(int $columns, int $rows, bool $bestfit = false, bool $fill = false): bool {}
+
+    public function cropImage(int $width, int $height, int $x, int $y): bool {}
+
+    public function setImagePage(int $width, int $height, int $x, int $y): bool {}
+
+    public function adaptiveSharpenImage(float $radius, float $sigma, int $channel = 0): bool {}
+
+    public function modulateImage(float $brightness, float $saturation, float $hue): bool {}
+
+    public function brightnessContrastImage(float $brightness, float $contrast, int $channel = 0): bool {}
+
+    public function colorizeImage(mixed $colorize, mixed $opacity, ?bool $legacy = false): bool {}
+
+    public function sepiaToneImage(float $threshold): bool {}
+
+    public function blurImage(float $radius, float $sigma, int $channel = 0): bool {}
+
+    public function adaptiveBlurImage(float $radius, float $sigma, int $channel = 0): bool {}
+
+    public function contrastImage(bool $sharpen): bool {}
+
+    public function setImageFormat(string $format): bool {}
+
+    public function setImageCompressionQuality(int $quality): bool {}
+
+    public function setInterlaceScheme(int $interlace): bool {}
+
+    public function setOption(string $key, string $value): bool {}
+
+    /** @param list<string> $factors */
+    public function setSamplingFactors(array $factors): bool {}
+
+    public function getImageAlphaChannel(): bool {}
+
+    public function getImageProperty(string $name): string {}
+
+    public function writeImage(?string $filename = null): bool {}
+
+    public function clear(): bool {}
+
+    public function destroy(): bool {}
+
+    /** @return array{quantumRangeLong:int,quantumRangeString:string} */
+    public static function getQuantumRange(): array {}
+
+    public static function setResourceLimit(int $type, int $limit): bool {}
+}

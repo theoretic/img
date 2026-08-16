@@ -1,0 +1,82 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Atispro\Img\Cli\Application;
+use Atispro\Img\Exception\ImgException;
+
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        break;
+    }
+}
+
+const USAGE = "usage: atispro-img <clear|diff-legacy|capabilities> [--dry-run] [--limit=N] [--config path]\n";
+
+$arguments = array_values(array_slice($argv, 1));
+$command = '';
+$configPath = getcwd() . '/img.config.php';
+$rest = [];
+
+/**
+ * Parsed strictly. The previous loop collected anything starting with `-` into
+ * $rest, so the space form `--config path` was silently ignored and the path
+ * fell through as a stray argument — `atispro-img clear --config /siteB/…` run
+ * from siteA wiped siteA's cache and exited 0.
+ */
+for ($i = 0, $count = count($arguments); $i < $count; $i++) {
+    $argument = $arguments[$i];
+
+    if (str_starts_with($argument, '--config=')) {
+        $configPath = substr($argument, 9);
+        continue;
+    }
+
+    if ($argument === '--config') {
+        $next = $arguments[$i + 1] ?? null;
+        if ($next === null || str_starts_with($next, '-')) {
+            fwrite(STDERR, "--config needs a path\n");
+            exit(1);
+        }
+        $configPath = $next;
+        $i++;
+        continue;
+    }
+
+    if ($argument === '--dry-run' || str_starts_with($argument, '--limit=') || str_starts_with($argument, '--fail-on=')) {
+        $rest[] = $argument;
+        continue;
+    }
+
+    if (str_starts_with($argument, '-')) {
+        fwrite(STDERR, "unknown option: {$argument}\n" . USAGE);
+        exit(1);
+    }
+
+    if ($command === '') {
+        $command = $argument;
+        continue;
+    }
+
+    fwrite(STDERR, "unexpected argument: {$argument}\n" . USAGE);
+    exit(1);
+}
+
+if ($command === '' || $command === 'help') {
+    fwrite(STDERR, USAGE);
+    exit(0);
+}
+
+if (!is_file($configPath)) {
+    fwrite(STDERR, "config not found: {$configPath}\nPass --config path/to/img.config.php\n");
+    exit(1);
+}
+
+try {
+    exit((new Application($configPath))->run($command, $rest));
+} catch (ImgException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
+}

@@ -1,0 +1,76 @@
+# Drop in at webroot/site/assets/files/.htaccess
+#
+# This is the file that actually routes image traffic. Derivatives are written
+# under this directory, so once one exists the !-s condition stops matching and
+# Apache serves it statically without entering PHP at all — that static path is
+# the whole caching strategy, and it is why the cache headers below matter.
+
+<FilesMatch "\.(txt|bat|batch)$">
+	<IfModule mod_authz_core.c>
+		Require all denied
+	</IfModule>
+	<IfModule !mod_authz_core.c>
+		Deny from all
+	</IfModule>
+</FilesMatch>
+
+# The pipeline keeps its state here, and these files are non-empty, so the
+# !-s rule below hands them straight to Apache as static downloads:
+#   .capabilities.json  the absolute path of the ImageMagick binary and a map
+#                       of which backends this host is missing
+#   .pipeline.json      package version and config fingerprint
+#   .locks/*.lock       one file per derivative currently being generated
+#   *.tmp               a partially written image, served as a truncated download
+# None of it is any visitor's business.
+<FilesMatch "^\.">
+	<IfModule mod_authz_core.c>
+		Require all denied
+	</IfModule>
+	<IfModule !mod_authz_core.c>
+		Deny from all
+	</IfModule>
+</FilesMatch>
+
+<FilesMatch "\.(json|tmp|lock)$">
+	<IfModule mod_authz_core.c>
+		Require all denied
+	</IfModule>
+	<IfModule !mod_authz_core.c>
+		Deny from all
+	</IfModule>
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+	# Directory-level state (.locks/) needs a path rule; FilesMatch only sees
+	# the basename.
+	RewriteEngine On
+	RewriteRule (^|/)\.  - [F,L]
+</IfModule>
+
+# NOTE: previous versions granted web access to rmthumbs.php here, which made a
+# full derivative-cache wipe — and the CPU storm of regenerating everything —
+# available to anyone who requested the URL. Cache clearing is now
+# `atispro-img clear`, and deliberately has no web route. Delete rmthumbs.php.
+
+# B escapes $1 before substitution, QSD discards any client query string.
+# Without B, an `&` surviving in the path splits into extra $_GET parameters —
+# /files/1044/photo%26debug=capabilities%26x.jpg arrives as request=1044/photo
+# plus a debug parameter, which is exactly the injection dropping QSA was
+# supposed to have closed. See api/img/.htaccess.
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-s
+RewriteRule ^(.*)$ /api/img/index.php?request=$1 [B,QSD,L]
+
+# Static phase only: the derivative already exists and PHP is not involved.
+# Without this block, an already-generated image is re-served with no cache
+# policy at all, so every hit is a fresh download.
+FileETag MTime Size
+
+<IfModule mod_headers.c>
+	<FilesMatch "\.(jpe?g|png|webp|avif|gif)$">
+		# 7 days fresh, then revalidate via ETag / Last-Modified -> 304.
+		# Matches the max-age the PHP phase sets on first generation.
+		Header set Cache-Control "public, max-age=604800, must-revalidate"
+		Header unset Pragma
+	</FilesMatch>
+</IfModule>

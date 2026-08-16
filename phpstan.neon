@@ -1,0 +1,12 @@
+parameters:
+	level: 6
+	paths:
+		- src
+		- bin
+		- site-stub
+		- tests
+	# scanFiles, not stubFiles: ext-imagick is optional, so on a host without it
+	# the class has to be introduced rather than merely re-typed.
+	scanFiles:
+		- stubs/imagick.stub
+	treatPhpDocTypesAsCertain: false

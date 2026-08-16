@@ -1,0 +1,39 @@
+{
+	"name": "atispro/img-pipeline",
+	"description": "On-demand image derivative pipeline: path-encoded geometry, focal-point crop, format conversion and a filter registry. ext-imagick with an ImageMagick CLI fallback, no node toolchain.",
+	"type": "library",
+	"license": "proprietary",
+	"require": {
+		"php": ">=8.2",
+		"ext-json": "*"
+	},
+	"require-dev": {
+		"phpunit/phpunit": "^11.0",
+		"phpstan/phpstan": "^2.0",
+		"ext-gd": "*"
+	},
+	"suggest": {
+		"ext-imagick": "Native backend; without it the pipeline shells out to the ImageMagick CLI."
+	},
+	"autoload": {
+		"psr-4": {
+			"Atispro\\Img\\": "src/"
+		}
+	},
+	"autoload-dev": {
+		"psr-4": {
+			"Atispro\\Img\\Tests\\": "tests/"
+		}
+	},
+	"bin": [
+		"bin/atispro-img"
+	],
+	"scripts": {
+		"test": "phpunit",
+		"stan": "phpstan analyse",
+		"demo": "php -S localhost:8080 -t demo demo/router.php"
+	},
+	"config": {
+		"sort-packages": true
+	}
+}
