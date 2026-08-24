@@ -51,7 +51,7 @@ final class Pipeline
     {
         // Tokenised once and reused: asking for the canonical path and then
         // parsing ran the whole validate-and-split twice over.
-        $parts = UrlGrammar::inspect($request);
+        $parts = UrlGrammar::inspect($request, $this->config);
         if ($parts === null) {
             throw new NotFoundException('not an image request');
         }
@@ -59,6 +59,7 @@ final class Pipeline
         $canonical = UrlGrammar::canonicalFrom($parts, $this->config);
 
         if ($canonical !== UrlGrammar::normalize($request)) {
+            // Permanent: purely syntactic, so it can never change for this URL.
             return Result::redirect($this->config->publicBase . '/' . $canonical);
         }
 
@@ -69,9 +70,23 @@ final class Pipeline
         // Send the client to where it actually lives: otherwise the URL names a
         // path that never exists on disk, so Apache's `!-s` rule can never
         // short-circuit and every single request re-enters PHP.
+        //
+        // Temporary, unlike the canonicalisation above: whether the box covers
+        // the source depends on the source's current dimensions, and replacing
+        // the image in place must not leave clients holding a 301 for a week.
         $destination = $this->relativePath($image->dstFile);
         if ($destination !== null && $destination !== $canonical) {
-            return Result::redirect($this->config->publicBase . '/' . $destination);
+            return Result::redirect($this->config->publicBase . '/' . $destination, permanent: false);
+        }
+
+        // A fit (`f`) request resolves to a single-axis derivative once the
+        // source aspect is known; the free axis is only a second cache key over
+        // identical bytes. Collapse it — temporary too, because replacing the
+        // source can flip which axis binds. Old derivatives generated before
+        // this rule still short-circuit in Apache and never reach here.
+        $cover = UrlGrammar::coverCanonical($parts, $image);
+        if ($cover !== null && $cover !== $canonical) {
+            return Result::redirect($this->config->publicBase . '/' . $cover, permanent: false);
         }
 
         if ($image->isPassthrough()) {

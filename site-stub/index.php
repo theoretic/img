@@ -12,7 +12,15 @@ use Atispro\Img\Result;
 
 require $_SERVER['DOCUMENT_ROOT'] . '/vendor/autoload.php';
 
-$config = Config::fromArray(require __DIR__ . '/img.config.php');
+// A config mistake used to escape as an uncaught fatal — with display_errors on,
+// that dumps the absolute imagesPath and a stack trace to the client.
+try {
+    $config = Config::fromArray(require __DIR__ . '/img.config.php');
+} catch (\Throwable $e) {
+    error_log('[atispro-img] config: ' . $e->getMessage());
+    Response::serverError();
+    exit;
+}
 
 if (!in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true)) {
     Response::methodNotAllowed();
@@ -50,10 +58,17 @@ try {
     error_log('[atispro-img] ' . $e->getMessage());
     Response::notFound();
     exit;
+} catch (\Throwable $e) {
+    // Anything the pipeline's own exception tree does not cover — a TypeError,
+    // an Error from a broken extension. Same rule as above: log the detail,
+    // send nothing but the status.
+    error_log('[atispro-img] unexpected: ' . $e->getMessage());
+    Response::serverError();
+    exit;
 }
 
-if ($result->kind === Result::REDIRECT) {
-    Response::redirect($result->path);
+if ($result->isRedirect()) {
+    Response::redirect($result->path, $result->permanent);
     exit;
 }
 

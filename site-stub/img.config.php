@@ -7,7 +7,16 @@
 
 declare(strict_types=1);
 
-$root = $_SERVER['DOCUMENT_ROOT'];
+/**
+ * The CLI SAPI hardcodes $_SERVER['DOCUMENT_ROOT'] to an empty string, and no
+ * environment variable can override it. Without the fallback every documented
+ * command — `atispro-img clear`, `diff-legacy`, `capabilities` — resolves
+ * imagesPath to "/site/assets/files" and dies with "not a directory".
+ *
+ * This file is deployed at webroot/api/img/img.config.php, so two levels up is
+ * the webroot. Adjust the depth if you put it somewhere else.
+ */
+$root = $_SERVER['DOCUMENT_ROOT'] ?: dirname(__DIR__, 2);
 
 return [
     'imagesPath' => "{$root}/site/assets/files",
@@ -19,9 +28,17 @@ return [
     // once its adaptive-media build is known to snap to the same ladders.
     // 'geometryPolicy' => 'strict',
 
-    // Must match the ladders in @atispro/core adaptive-media.js.
-    // 'widths'  => [200, 300, 400, 640, 800, 1024, 1280, 1600, 1920, 2400, 3000],
-    // 'heights' => [200, 300, 400, 600, 800, 1000, 1600, 2000],
+    // Must match `sizes` in @atispro/core adaptive-media.js — ONE ladder shared
+    // by both axes there, so widths and heights must be identical here too.
+    // These are the package defaults, spelled out for reference:
+    // 'widths'  => [200, 300, 400, 450, 600, 800, 1000, 1200, 1600, 2000, 2400, 3000],
+    // 'heights' => [200, 300, 400, 450, 600, 800, 1000, 1200, 1600, 2000, 2400, 3000],
+
+    // Filter names this site's URLs may invoke. Every registered parameter
+    // combination is a distinct cache entry, so an unused filter is pure attack
+    // surface: a site using no filters should say [], one using two should list
+    // the two. Unset means every registered filter (the compatible default).
+    // 'filters' => ['darken', 'blur'],
 
     // 'processor' => 'auto',
 

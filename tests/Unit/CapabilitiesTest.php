@@ -6,6 +6,7 @@ namespace Atispro\Img\Tests\Unit;
 
 use Atispro\Img\Process\Capabilities;
 use Atispro\Img\Tests\Support\TempSite;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class CapabilitiesTest extends TestCase
@@ -193,5 +194,31 @@ final class CapabilitiesTest extends TestCase
                 "{$stream} is not valid UTF-8",
             );
         }
+    }
+
+    /**
+     * ImageMagick 7 answers "False", 6 answers "false". The comparison used to
+     * be case-sensitive, so every IM 7 host reported no AVIF alpha support and
+     * quietly served WebP bytes under every .avif URL.
+     *
+     * @return iterable<string,array{0:string,1:string,2:bool}>
+     */
+    public static function avifAlphaVerdicts(): iterable
+    {
+        $avif = "\0\0\0\x1cftypavif\0\0\0\0";
+        $webp = "RIFF\xd4\x0e\0\0WEBPVP8X";
+
+        yield 'IM 7 spelling'        => [$avif, "False\n", true];
+        yield 'IM 6 spelling'        => [$avif, 'false', true];
+        yield 'opaque, so no alpha'  => [$avif, 'True', false];
+        yield 'property unsupported' => [$avif, '', false];
+        yield 'not an AVIF at all'   => [$webp, 'False', false];
+        yield 'encode produced none' => ['', 'False', false];
+    }
+
+    #[DataProvider('avifAlphaVerdicts')]
+    public function testReadsAvifAlpha(string $magic, string $opaque, bool $expected): void
+    {
+        self::assertSame($expected, Capabilities::readsAvifAlpha($magic, $opaque));
     }
 }

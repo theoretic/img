@@ -192,6 +192,19 @@ final class ResponseTest extends TestCase
     }
 
     /**
+     * A redirect whose validity depends on the source image's current content —
+     * the covers-source collapse, the cover-fit binding-axis collapse — must
+     * not be cached as permanent: replacing the source flips the target.
+     */
+    public function testContentDerivedRedirectIsTemporary(): void
+    {
+        Response::redirect('/site/assets/files/1044/x800/photo.jpg', permanent: false);
+
+        self::assertSame('HTTP/1.1 302 Found', $this->statusLine());
+        self::assertSame('public, max-age=3600', $this->header('Cache-Control'));
+    }
+
+    /**
      * A comma is legal in a path segment and canonical filter tokens contain
      * one, so encoding it would point the client at a spelling that differs
      * from the canonical path it is meant to land on.

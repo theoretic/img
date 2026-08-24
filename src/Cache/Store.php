@@ -58,7 +58,10 @@ final class Store
         $stamp = $this->stampMtime();
 
         clearstatcache(true, $file);
-        if (!is_file($file) || filesize($file) === 0) {
+        // Loose on purpose: filesize() returns false (not 0) when the file
+        // vanishes between the two calls, and false === 0 would read a deleted
+        // file as fresh.
+        if (!is_file($file) || !filesize($file)) {
             return false;
         }
 
@@ -97,7 +100,6 @@ final class Store
      */
     public function publish(string $file, ?string $sourceFile, callable $write): void
     {
-        $this->assertWritable($file);
         $this->ensureDir(dirname($file));
         $this->sweepStaleTemporaries(dirname($file));
 
@@ -117,6 +119,11 @@ final class Store
             if ($this->isFresh($file, $sourceFile)) {
                 return;
             }
+
+            // Inside the lock, so the answer cannot change between the check
+            // and the write it guards.
+            $this->assertWritable($file);
+            $this->assertUnderCap($file, $sourceFile);
 
             $temp = $this->temp($file);
 
@@ -149,7 +156,7 @@ final class Store
      */
     private function assertWritable(string $file): void
     {
-        if (!is_file($file) || filesize($file) === 0) {
+        if (!is_file($file) || !filesize($file)) {
             return;
         }
 
@@ -160,6 +167,48 @@ final class Store
         throw new ProcessException(
             "refusing to overwrite {$file}: it is not a file this pipeline generated",
         );
+    }
+
+    /**
+     * The backstop on derivatives-per-source. The URL grammar bounds each
+     * dimension of the key space (geometry ladder, filter steps), but their
+     * product is still large; this caps what any one source can accumulate in
+     * one directory, however the space was reached. Legitimate use — the
+     * formats times the filters a site actually employs — sits far below it.
+     *
+     * @throws ProcessException
+     */
+    private function assertUnderCap(string $file, ?string $sourceFile): void
+    {
+        $cap = $this->config->derivativeCap;
+        if ($cap <= 0 || $sourceFile === null) {
+            return;
+        }
+
+        // Every derivative of photo.jpg starts with "photo." — conversions
+        // (photo.jpg.webp), filters (photo.blur2.jpg), geometry copies keep the
+        // full stem. scandir rather than glob: a filename may contain glob
+        // metacharacters, and the directory is small by construction (this very
+        // cap bounds it).
+        $stem = pathinfo(basename($sourceFile), PATHINFO_FILENAME) . '.';
+
+        $entries = @scandir(dirname($file));
+        if ($entries === false) {
+            return;
+        }
+
+        $count = 0;
+        foreach ($entries as $entry) {
+            if (str_starts_with($entry, $stem) && !str_ends_with($entry, '.tmp')) {
+                $count++;
+            }
+        }
+
+        if ($count >= $cap) {
+            throw new ProcessException(
+                "derivative cap ({$cap}) reached for {$stem}* in " . dirname($file),
+            );
+        }
     }
 
     /**
@@ -220,9 +269,11 @@ final class Store
      * Mtime of the version stamp. Any derivative older than this predates the
      * current package version or configuration and has to be rebuilt.
      *
-     * This is how a change to the filter registry, the encoder settings or the
-     * sharpen parameters invalidates existing files: the URL is the cache key
-     * and cannot carry a version, so the comparison is by age instead.
+     * This is how a change to the encoder settings or the sharpen parameters
+     * invalidates existing files: the URL is the cache key and cannot carry a
+     * version, so the comparison is by age instead. Code changes — the filter
+     * registry included — are covered only by a Pipeline::VERSION bump; the
+     * config hash cannot see them.
      */
     private function stampMtime(): int
     {
@@ -290,8 +341,25 @@ final class Store
             return;
         }
 
+        // The lock file is deleted, not just unlocked: it used to be left
+        // behind forever, one permanent zero-byte inode per derivative ever
+        // generated, all in one flat directory.
+        //
+        // Unlinked after fclose, because Windows refuses to delete a file with
+        // an open handle. Two benign races follow. A waiter that already opened
+        // this path can flock the orphaned inode while a newcomer creates a
+        // fresh file — two writers racing one derivative, which the atomic
+        // rename already makes safe. And on Windows the unlink itself fails
+        // while a waiter still holds the handle — that waiter's own release
+        // deletes it instead.
+        $meta = stream_get_meta_data($handle);
+
         @flock($handle, LOCK_UN);
         fclose($handle);
+
+        if (is_string($meta['uri'] ?? null)) {
+            @unlink($meta['uri']);
+        }
     }
 
     private function ensureDir(string $dir): void

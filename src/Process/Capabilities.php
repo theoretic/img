@@ -540,8 +540,35 @@ final class Capabilities
 
         self::run([$bin, '-size', '2x2', 'xc:rgba(255,0,0,0.5)', '-alpha', 'set', 'avif:' . $tmp]);
         $out = self::run([$bin, $tmp, '-format', '%[opaque]', 'info:'])['out'];
+        // Read before unlinking: the verdict needs the container, not just the
+        // coder's opinion of its own output.
+        $magic = (string) @file_get_contents($tmp, false, null, 0, 16);
         @unlink($tmp);
 
-        return trim($out) === 'false';
+        return self::readsAvifAlpha($magic, $out);
+    }
+
+    /**
+     * The verdict of probeAvifAlpha(), split out so it can be tested without a
+     * binary on the host.
+     *
+     * Both halves are load-bearing:
+     *
+     *   - the magic check is the failure the caller actually fears, a coder
+     *     that answers an AVIF request with some other container under the
+     *     .avif name.
+     *   - `%[opaque]` is capitalised by ImageMagick 7 ("False") and not by 6
+     *     ("false"). A case-sensitive comparison here answered "no alpha
+     *     support" on every IM 7 host, which silently downgraded every
+     *     alpha-sourced AVIF to WebP for as long as the marker lived.
+     *
+     * An unsupported property answers empty, which correctly reads as no alpha.
+     *
+     * @param string $magic  first bytes of the encoded file
+     * @param string $opaque raw `%[opaque]` output
+     */
+    public static function readsAvifAlpha(string $magic, string $opaque): bool
+    {
+        return str_contains($magic, 'ftypavif') && strtolower(trim($opaque)) === 'false';
     }
 }

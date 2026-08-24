@@ -74,34 +74,44 @@ final class GeometryTest extends TestCase
     }
 
     /**
-     * The reported defect. A 400x800 placeholder against a landscape source:
-     * deciding by width alone under-fills the box vertically, because the
-     * delivered image keeps the source aspect.
+     * Fit semantics: the constrained axis is the one that binds an
+     * object-fit:contain display of the box — the SMALLER scale factor, the
+     * exact pixels the display shows. (Until 24.08.26 this picked the larger
+     * one — cover-the-box — which over-delivered for every contain display.)
      */
-    public function testCoverFitPicksTheBindingAxis(): void
+    public function testFitPicksTheAxisTheContainDisplayBinds(): void
     {
         $config = $this->config();
 
-        // Box is taller than the source is => height binds.
+        // Box (0.5) narrower than the source (1.33): the display letterboxes
+        // vertically, width rules the visible size.
         [$w, $h] = (new Geometry(400, 800, Geometry::FIT_COVER))->resolve(2000, 1500, $config);
-        self::assertSame([0, 800], [$w, $h]);
+        self::assertSame([400, 0], [$w, $h]);
 
-        // Derived width covers the box comfortably.
-        self::assertGreaterThanOrEqual(400, (int) round(800 * (2000 / 1500)));
+        // The delivered height (400 / 1.33 = 300) is what the display shows —
+        // NOT the 800 the retired cover semantics would have demanded.
+        self::assertLessThan(800, (int) round(400 / (2000 / 1500)));
 
-        // Box is wider than the source is => width binds.
+        // Box (4.0) wider than the source (0.5): pillarboxed, height rules.
         [$w, $h] = (new Geometry(1600, 400, Geometry::FIT_COVER))->resolve(3000, 6000, $config);
-        self::assertSame([1600, 0], [$w, $h]);
+        self::assertSame([0, 400], [$w, $h]);
     }
 
-    public function testCoverFitDegradesToTheSourceWhenItCannotCover(): void
+    public function testFitNeverUpscalesPastTheSource(): void
     {
         $config = $this->config();
 
-        // 400x800 box, 800x200 source: height binds, but there are only 200 rows
-        // to give, so the answer is the whole source rather than an upscale.
+        // 400x800 box, 800x200 source: width binds the contain display, and
+        // 400 columns exist to give. Delivered 400x100 — the display size of
+        // that box, and the very output the old cover mode was invented to
+        // "fix": it was only ever a defect for a cover expectation.
         [$w, $h] = (new Geometry(400, 800, Geometry::FIT_COVER))->resolve(800, 200, $config);
-        self::assertSame([0, 200], [$w, $h]);
+        self::assertSame([400, 0], [$w, $h]);
+
+        // A box wider than a tiny source on both axes: height binds (box aspect
+        // 4 >= source aspect 1), and only 90 rows exist.
+        [$w, $h] = (new Geometry(1600, 400, Geometry::FIT_COVER))->resolve(90, 90, $config);
+        self::assertSame([0, 90], [$w, $h]);
     }
 
     public function testCropFitKeepsBothAxes(): void
@@ -148,10 +158,10 @@ final class GeometryTest extends TestCase
 
     public function testNeedsCropOnlyWhenAspectsDiffer(): void
     {
-        $geometry = new Geometry(400, 800);
-
-        self::assertTrue($geometry->needsCrop(400, 800, 2000, 1500));
-        self::assertFalse($geometry->needsCrop(400, 800, 1000, 2000), 'same 1:2 aspect');
-        self::assertFalse($geometry->needsCrop(400, 0, 2000, 1500), 'one free axis never crops');
+        // Static, and the single implementation: ImageRequest::needsCrop()
+        // delegates here, so the epsilon rule cannot drift between the two.
+        self::assertTrue(Geometry::needsCrop(400, 800, 2000, 1500));
+        self::assertFalse(Geometry::needsCrop(400, 800, 1000, 2000), 'same 1:2 aspect');
+        self::assertFalse(Geometry::needsCrop(400, 0, 2000, 1500), 'one free axis never crops');
     }
 }

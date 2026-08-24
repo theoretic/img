@@ -14,29 +14,48 @@ use Atispro\Img\Config;
  * Two fit modes:
  *
  *   400x800   crop  — resize to fill the box, then focal-point crop to exactly
- *                     800x400. The delivered aspect is the box aspect.
- *   400x800f  cover — resize so the box is covered with the SOURCE aspect kept
- *                     and nothing cropped. Only one axis ends up constrained;
- *                     which one depends on how the box aspect compares to the
- *                     source aspect, so it can only be decided here, where the
- *                     source dimensions are known.
+ *                     400x800. The delivered aspect is the box aspect.
+ *   400x800f  fit   — resize so the image FITS the box with the SOURCE aspect
+ *                     kept and nothing cropped: exactly the pixels an
+ *                     object-fit:contain display of that box shows, and no
+ *                     more. Only one axis ends up constrained — the one that
+ *                     binds the contain display — and which one that is
+ *                     depends on how the box aspect compares to the source
+ *                     aspect, so it can only be decided here, where the source
+ *                     dimensions are known.
  *
- * The cover mode exists because the client cannot make that comparison: it
- * knows the placeholder box but not the source image. Deciding by width alone —
- * which is what adaptive-media.js did — under-fills every box that is taller
- * than the source is. A 380x800 placeholder against an 800x200 source asked for
- * /400x/ and got back 400x100.
+ * `f` is a legacy REQUEST form: it stores nothing under its own name (Pipeline
+ * answers it with a 302 to the single-axis canonical), and current
+ * adaptive-media builds do not emit it at all — they resolve the binding axis
+ * client-side from data-src-aspect or the learned-ratio cache and ask
+ * single-axis directly. It is kept so old URLs in cached HTML keep resolving.
+ *
+ * History: `f` originally meant cover-the-box-without-crop (max axis). That
+ * guarantee over-delivered for every contain display — the only thing that
+ * ever consumed it — by up to the square of the aspect mismatch, and the
+ * under-fill defect that motivated it (a 380x800 placeholder against an
+ * 800x200 source getting 400x100) was really a *cover* expectation, which the
+ * crop mode serves properly. Retired 24.08.26.
  */
 final readonly class Geometry
 {
     /** Resize to fill, then crop to the exact box. */
     public const FIT_CROP = '';
 
-    /** Resize to cover the box, source aspect kept, no crop. */
+    /**
+     * Resize to fit the box, source aspect kept, no crop — the pixels a
+     * contain display of the box actually shows. Legacy request form; see the
+     * class docblock.
+     */
     public const FIT_COVER = 'f';
 
-    /** Aspect ratios within this relative distance are treated as equal. */
-    private const ASPECT_EPSILON = 0.01;
+    /**
+     * Aspect ratios within this relative distance are treated as equal. Public
+     * because ImageRequest::needsCrop() applies the same rule — the two must
+     * never drift apart, or the geometry and the encoder disagree on whether a
+     * crop happens.
+     */
+    public const ASPECT_EPSILON = 0.01;
 
     public function __construct(
         public int $width,
@@ -124,16 +143,20 @@ final readonly class Geometry
         $h = $this->height;
 
         if ($this->fit === self::FIT_COVER && $w > 0 && $h > 0 && $srcHeight > 0) {
-            // Keep the source aspect and cover the box: whichever axis needs the
-            // larger scale factor is the binding one, and the other is dropped so
-            // the backend derives it proportionally.
+            // Keep the source aspect and FIT the box: the axis that binds an
+            // object-fit:contain display is the one with the SMALLER scale
+            // factor, and the other is dropped so the backend derives it
+            // proportionally. (The pre-24.08.26 cover semantics kept the larger
+            // one — over-delivering for every contain display.)
             $boxAspect = $w / $h;
             $srcAspect = $srcWidth / $srcHeight;
 
             if ($boxAspect >= $srcAspect) {
-                $h = 0;
-            } else {
+                // Box wider than the source: the display pillarboxes, height
+                // rules the visible size.
                 $w = 0;
+            } else {
+                $h = 0;
             }
         }
 
@@ -142,9 +165,12 @@ final readonly class Geometry
 
     /**
      * True when the resolved box has a different aspect from the source and a
-     * crop is therefore needed. Cover mode never crops.
+     * crop is therefore needed. Cover mode never crops (one axis is 0).
+     *
+     * Static, and the single implementation: ImageRequest::needsCrop() used to
+     * carry an inline copy of the epsilon rule, which could drift.
      */
-    public function needsCrop(int $targetWidth, int $targetHeight, int $srcWidth, int $srcHeight): bool
+    public static function needsCrop(int $targetWidth, int $targetHeight, int $srcWidth, int $srcHeight): bool
     {
         if ($targetWidth === 0 || $targetHeight === 0 || $srcWidth === 0 || $srcHeight === 0) {
             return false;

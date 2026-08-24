@@ -50,7 +50,7 @@ final class UrlGrammar
      */
     public static function canonicalPath(string $request, Config $config): ?string
     {
-        $parts = self::inspect($request);
+        $parts = self::inspect($request, $config);
 
         return $parts === null ? null : self::canonicalFrom($parts, $config);
     }
@@ -62,14 +62,17 @@ final class UrlGrammar
      * sequence ran assertSafe(), normalize() and split() two or three times per
      * request. Pipeline uses this directly.
      *
+     * Takes the Config because the filter allowlist decides whether a trailing
+     * token is a filter or just part of the filename.
+     *
      * @return array{dir:string,geometry:Geometry|null,name:string,filter:Token|null,srcExt:string,ext:string}|null
      * @throws NotFoundException when the path fails containment
      */
-    public static function inspect(string $request): ?array
+    public static function inspect(string $request, Config $config): ?array
     {
         self::assertSafe($request);
 
-        return self::split($request);
+        return self::split($request, $config);
     }
 
     /**
@@ -96,12 +99,23 @@ final class UrlGrammar
             $dir = $parent === '' ? $geometry->segment() : $parent . '/' . $geometry->segment();
         }
 
-        $filename = $parts['name']
+        $filename = self::canonicalFilename($parts);
+
+        return $dir === '' ? $filename : $dir . '/' . $filename;
+    }
+
+    /**
+     * Canonical filename: name, canonical filter token, source extension, and
+     * the target extension only when it differs.
+     *
+     * @param array{dir:string,geometry:Geometry|null,name:string,filter:Token|null,srcExt:string,ext:string} $parts
+     */
+    private static function canonicalFilename(array $parts): string
+    {
+        return $parts['name']
             . ($parts['filter'] !== null ? '.' . $parts['filter']->token() : '')
             . '.' . $parts['srcExt']
             . ($parts['ext'] !== strtolower($parts['srcExt']) ? '.' . $parts['ext'] : '');
-
-        return $dir === '' ? $filename : $dir . '/' . $filename;
     }
 
     /**
@@ -112,7 +126,7 @@ final class UrlGrammar
      */
     public static function parse(string $request, Config $config): ImageRequest
     {
-        $parts = self::inspect($request);
+        $parts = self::inspect($request, $config);
         if ($parts === null) {
             throw new NotFoundException('not an image request');
         }
@@ -131,7 +145,16 @@ final class UrlGrammar
         $file = $config->imagesPath . '/' . self::normalize($request);
         self::assertContained($file, $config);
 
-        if (!$config->allowsFormat($parts['ext'])) {
+        // The allowlist governs what the pipeline WRITES. A plain request for an
+        // existing upload writes nothing, so it is exempt: without this, a
+        // GIF/TIFF/BMP original — recognised by IMAGE_EXTENSIONS but absent from
+        // the encoder table — could never even be served. Transforming one still
+        // requires its target format to be writable.
+        $writesNothing = $parts['geometry'] === null
+            && $parts['filter'] === null
+            && $parts['ext'] === strtolower($parts['srcExt']);
+
+        if (!$writesNothing && !$config->allowsFormat($parts['ext'])) {
             throw new NotFoundException("output format not allowed: {$parts['ext']}");
         }
 
@@ -240,11 +263,48 @@ final class UrlGrammar
     }
 
     /**
+     * The single-axis canonical path a fit (`f`) request collapses onto once
+     * the source is known, or null when the request is not an f geometry.
+     *
+     * An f request stores nothing under its own name. resolve() zeroes the
+     * non-binding axis, so the derivative is exactly what the plain single-axis
+     * request of the surviving rung produces — the free axis contributes
+     * nothing but a second cache key over identical bytes (800x450f and
+     * 600x450f of a landscape source are the same x450 file). canonicalFrom()
+     * cannot collapse it: which axis binds depends on the source aspect, which
+     * is only known here, after getimagesize(). Pipeline answers with a
+     * redirect, so `f` stays a request form without ever becoming a storage
+     * form.
+     *
+     * @param array{dir:string,geometry:Geometry|null,name:string,filter:Token|null,srcExt:string,ext:string} $parts
+     */
+    public static function coverCanonical(array $parts, ImageRequest $image): ?string
+    {
+        $geometry = $parts['geometry'];
+        if ($geometry === null || $geometry->fit !== Geometry::FIT_COVER) {
+            return null;
+        }
+
+        // resolve() kept the binding axis and zeroed the other; the redirect
+        // carries the REQUESTED rung of the surviving axis, not the clamped
+        // value — a clamped value can be off-ladder, and the single-axis
+        // request re-applies the same clamp anyway.
+        $bound = $image->targetHeight === 0
+            ? new Geometry($geometry->width, 0)
+            : new Geometry(0, $geometry->height);
+
+        $parent = self::parentDir($parts['dir']);
+        $dir = $parent === '' ? $bound->segment() : $parent . '/' . $bound->segment();
+
+        return $dir . '/' . self::canonicalFilename($parts);
+    }
+
+    /**
      * Syntactic split of a request path.
      *
      * @return array{dir:string,geometry:Geometry|null,name:string,filter:Token|null,srcExt:string,ext:string}|null
      */
-    private static function split(string $request): ?array
+    private static function split(string $request, Config $config): ?array
     {
         $relative = self::normalize($request);
         if ($relative === '') {
@@ -282,10 +342,16 @@ final class UrlGrammar
 
         // What remains is the name, optionally with a filter token on the end.
         // Only consider one when something would be left over as the name.
+        // A name outside the site's allowlist is treated exactly like one that
+        // was never registered: it stays part of the filename and the file is
+        // looked up as written.
         $filter = null;
         if (count($tokens) >= 2) {
             $candidate = (string) end($tokens);
             $filter = Token::parse($candidate);
+            if ($filter !== null && !$config->allowsFilter($filter->name)) {
+                $filter = null;
+            }
             if ($filter !== null) {
                 array_pop($tokens);
             }
@@ -313,8 +379,20 @@ final class UrlGrammar
     {
         $relative = str_replace('\\', '/', $request);
         $relative = (string) preg_replace('#/+#', '/', $relative);
+        $relative = ltrim($relative, '/');
 
-        return ltrim($relative, '/');
+        // Current-directory segments resolve to the same inode under a
+        // different URL string, which the "URL is the cache key" contract
+        // forbids. Apache strips them before mod_rewrite ever runs, but the
+        // demo router and direct Pipeline callers do not.
+        if (str_contains($relative, './')) {
+            $relative = implode('/', array_filter(
+                explode('/', $relative),
+                static fn (string $segment): bool => $segment !== '.',
+            ));
+        }
+
+        return $relative;
     }
 
     private static function parentDir(string $dir): string
@@ -336,11 +414,13 @@ final class UrlGrammar
      */
     private static function assertSafe(string $request): void
     {
-        if (str_contains($request, "\0")) {
-            throw new NotFoundException('null byte in request');
-        }
-
         foreach ([$request, rawurldecode($request)] as $form) {
+            // Checked on the decoded form too — a literal %00 in the path is
+            // a null byte after decoding, same as %2e%2e is a dot segment.
+            if (str_contains($form, "\0")) {
+                throw new NotFoundException('null byte in request');
+            }
+
             foreach (preg_split('#[/\\\\]#', $form) ?: [] as $segment) {
                 if ($segment === '..') {
                     throw new NotFoundException('parent-directory segment in request');

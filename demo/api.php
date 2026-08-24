@@ -20,7 +20,13 @@ use Atispro\Img\Result;
 
 require __DIR__ . '/../vendor/autoload.php';
 
-$config = Config::fromArray(require __DIR__ . '/img.config.php');
+try {
+    $config = Config::fromArray(require __DIR__ . '/img.config.php');
+} catch (\Throwable $e) {
+    error_log('[atispro-img] config: ' . $e->getMessage());
+    Response::serverError();
+    exit;
+}
 
 if (!in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true)) {
     Response::methodNotAllowed();
@@ -55,10 +61,19 @@ try {
 
     $e instanceof BusyException ? Response::busy() : Response::notFound();
     exit;
+} catch (\Throwable $e) {
+    error_log('[atispro-img] unexpected: ' . $e->getMessage());
+
+    if ($config->debug) {
+        header('X-Img-Error: ' . str_replace(["\r", "\n"], ' ', $e->getMessage()));
+    }
+
+    Response::serverError();
+    exit;
 }
 
-if ($result->kind === Result::REDIRECT) {
-    Response::redirect($result->path);
+if ($result->isRedirect()) {
+    Response::redirect($result->path, $result->permanent);
     exit;
 }
 

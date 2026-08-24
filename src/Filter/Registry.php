@@ -82,6 +82,15 @@ final class Registry
         $percent = static fn (float $default): array => [
             'default' => $default, 'min' => 0.0, 'max' => 200.0, 'step' => 1.0,
         ];
+        // Multi-parameter filters get a coarser step, because their parameter
+        // spaces multiply: at step 1 modulate admitted 201^3 ≈ 8.1M canonical
+        // tokens per image, every one a distinct derivative the pipeline would
+        // happily generate. Step 10 keeps 21^3 ≈ 9k — still far more looks than
+        // any design uses — and an off-step value 301-snaps to the nearest one
+        // through the same canonicalisation that handles off-ladder geometry.
+        $percentCoarse = static fn (float $default): array => [
+            'default' => $default, 'min' => 0.0, 'max' => 200.0, 'step' => 10.0,
+        ];
         $amount = static fn (float $default): array => [
             'default' => $default, 'min' => -100.0, 'max' => 100.0, 'step' => 1.0,
         ];
@@ -95,7 +104,7 @@ final class Registry
         return [
             // brightness, saturation, hue — all 100 = unchanged
             'modulate' => [
-                'params' => [$percent(100.0), $percent(100.0), $percent(100.0)],
+                'params' => [$percentCoarse(100.0), $percentCoarse(100.0), $percentCoarse(100.0)],
                 'ops' => static fn (array $p): array => [[
                     'imagick' => ['modulateImage', [$p[0], $p[1], $p[2]]],
                     'cli' => ['-modulate', self::num($p[0]) . ',' . self::num($p[1]) . ',' . self::num($p[2])],

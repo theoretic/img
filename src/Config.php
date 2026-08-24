@@ -27,6 +27,8 @@ final class Config
      * @param list<int> $widths Allowed width rungs, ascending.
      * @param list<int> $heights Allowed height rungs, ascending.
      * @param array<string,array<string,mixed>> $formats extension => encoder settings.
+     * @param list<string>|null $filters Filter names a URL may invoke; null = every registered filter.
+     * @param int $derivativeCap Max derivatives per source per directory; 0 disables the cap.
      * @param array{radius:float,sigma:float} $sharpen Applied after resize/crop.
      * @param array<string,string> $limits ImageMagick resource limits, name => value.
      * @param array<string,array{bin:string,args:list<string>,from:list<string>}> $externalEncoders
@@ -43,6 +45,8 @@ final class Config
         public readonly string $geometryPolicy,
         public readonly int $maxPixels,
         public readonly array $formats,
+        public readonly ?array $filters,
+        public readonly int $derivativeCap,
         public readonly array $sharpen,
         public readonly array $limits,
         public readonly string $imagemagickPath,
@@ -106,6 +110,22 @@ final class Config
                 'heif' => ['quality' => 55],
             ],
 
+            // Filter names a URL may invoke. null means every registered filter
+            // — the compatible default — but the parameter space is part of the
+            // cache key, so a site that uses no filters should set [] and a site
+            // that uses two should list the two. An unlisted name is simply not
+            // parsed as a filter: the token stays part of the filename, exactly
+            // like a name that was never registered.
+            'filters' => null,
+
+            // Ceiling on derivatives per source file per directory. The grammar
+            // bounds geometry (ladder) and filter tokens (steps), but the
+            // product of every legitimate dimension is still large; this is the
+            // backstop that stops one source from filling the disk regardless
+            // of how the request space was reached. Legitimate use sits far
+            // below it: formats x the filters a site actually uses. 0 disables.
+            'derivativeCap' => 100,
+
             // radius 0 lets ImageMagick pick; sigma controls strength.
             'sharpen' => ['radius' => 0, 'sigma' => 0.7],
 
@@ -115,6 +135,10 @@ final class Config
                 'area' => '256MP',
                 'memory' => '512MiB',
                 'map' => '1GiB',
+                // Without a disk ceiling, exceeding memory/map makes ImageMagick
+                // spill its pixel cache to disk with no bound at all — a small
+                // /tmp fills long before `time` fires.
+                'disk' => '1GiB',
                 'time' => '30',
             ],
 
@@ -144,15 +168,18 @@ final class Config
             'negativeCacheTtl' => 60,
 
             // Reader for the IPTC focal point, require_once'd when a crop needs
-            // it. Explicit configuration rather than a DOCUMENT_ROOT-derived
-            // path, because this one gets included. Empty disables the lookup
-            // and every crop is centred.
+            // it. The default derives from DOCUMENT_ROOT, which under Apache
+            // comes from the vhost and is not client-controllable — but under
+            // FastCGI it is a fastcgi_param, so on nginx/FPM deployments set
+            // this key explicitly (an included path must never be influenced by
+            // request data). Empty disables the lookup; every crop is centred.
             'iptcClassPath' => ($_SERVER['DOCUMENT_ROOT'] ?? '') === ''
                 ? ''
                 : $_SERVER['DOCUMENT_ROOT'] . '/site/shared/classes/IPTC.class.php',
 
-            // Enables ?debug=1 and ?debug=capabilities. Never leave on in production:
-            // the capabilities payload reports disable_functions and absolute paths.
+            // Enables ?debug=capabilities on direct hits to index.php. Never
+            // leave on in production: the payload reports disable_functions and
+            // absolute paths.
             'debug' => false,
         ];
     }
@@ -192,6 +219,13 @@ final class Config
             geometryPolicy: $policy,
             maxPixels: (int) $c['maxPixels'],
             formats: self::normalizeFormats((array) $c['formats']),
+            filters: $c['filters'] === null
+                ? null
+                : array_values(array_map(
+                    static fn (mixed $name): string => strtolower((string) $name),
+                    (array) $c['filters'],
+                )),
+            derivativeCap: (int) $c['derivativeCap'],
             sharpen: [
                 'radius' => (float) ($sharpen['radius'] ?? 0),
                 'sigma' => (float) ($sharpen['sigma'] ?? 0.7),
@@ -226,6 +260,16 @@ final class Config
     public function allowsFormat(string $extension): bool
     {
         return isset($this->formats[strtolower($extension)]);
+    }
+
+    /**
+     * Filter allowlist. The registry defines what a filter does; this decides
+     * whether a site exposes it at all. Every registered parameter combination
+     * is a distinct cache entry, so an unused filter is pure attack surface.
+     */
+    public function allowsFilter(string $name): bool
+    {
+        return $this->filters === null || in_array(strtolower($name), $this->filters, true);
     }
 
     /**

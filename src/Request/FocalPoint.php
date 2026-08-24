@@ -37,9 +37,11 @@ final class FocalPoint
      */
     private static function extract(string $srcFile, string $iptcClassPath): array
     {
-        // Taken from configuration rather than $_SERVER['DOCUMENT_ROOT']: this
-        // path is require_once'd, and a request-influenced DOCUMENT_ROOT would
-        // turn a crop into arbitrary PHP inclusion.
+        // This path is require_once'd, so it must never be influenced by
+        // request data. It comes from Config — but note the DEFAULT there
+        // derives from DOCUMENT_ROOT, which is vhost-set under Apache yet a
+        // fastcgi_param under FPM; nginx deployments must set iptcClassPath
+        // explicitly (see Config::defaults()).
         if ($iptcClassPath === '' || !is_file($iptcClassPath)) {
             return self::CENTRE;
         }

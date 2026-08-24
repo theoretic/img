@@ -39,14 +39,7 @@ final readonly class ImageRequest
     /** Will an actual crop happen, as opposed to a plain resize or a format change? */
     public function needsCrop(): bool
     {
-        if ($this->targetWidth === 0 || $this->targetHeight === 0 || $this->srcHeight === 0) {
-            return false;
-        }
-
-        $srcAspect = $this->srcWidth / $this->srcHeight;
-        $tgtAspect = $this->targetWidth / $this->targetHeight;
-
-        return abs(($tgtAspect - $srcAspect) / $srcAspect) >= 0.01;
+        return Geometry::needsCrop($this->targetWidth, $this->targetHeight, $this->srcWidth, $this->srcHeight);
     }
 
     /**

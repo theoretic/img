@@ -40,6 +40,13 @@ final class Cleaner
      */
     private const TEMP_GRACE_SECONDS = 600;
 
+    /**
+     * Lock files delete themselves on release now, so anything in .locks/ is
+     * either held by a running request or orphaned by a killed worker. Age
+     * separates the two: a held lock is never older than one conversion.
+     */
+    private const LOCK_GRACE_SECONDS = 60;
+
     public function __construct(private readonly Config $config)
     {
     }
@@ -140,7 +147,9 @@ final class Cleaner
         }
 
         if (basename(dirname($path)) === self::LOCK_DIR) {
-            return true;
+            // Deleting a lock a running request still holds lets a second
+            // writer in behind it — safe (atomic rename) but wasteful.
+            return ($now - (int) $info->getMTime()) > self::LOCK_GRACE_SECONDS;
         }
 
         if (str_ends_with($filename, '.tmp')) {

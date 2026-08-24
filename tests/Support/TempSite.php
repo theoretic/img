@@ -48,6 +48,15 @@ final class TempSite
         return $relative;
     }
 
+    /** Create a GIF — recognised as an image, absent from the encoder table. */
+    public function gif(string $relative, int $width, int $height): string
+    {
+        $path = $this->path($relative);
+        imagegif($this->canvas($width, $height), $path);
+
+        return $relative;
+    }
+
     /** Create a PNG with a transparent quadrant. */
     public function pngWithAlpha(string $relative, int $width, int $height): string
     {

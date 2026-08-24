@@ -14,6 +14,31 @@
 	</IfModule>
 </FilesMatch>
 
+# Nothing in an uploads tree may ever execute as PHP. Derivatives preserve the
+# whole source stem — a passthrough of `report.php.jpg` serves the original
+# bytes verbatim under that name — and a legacy `AddHandler .php` matches ANY
+# .php token in a filename, not just the last extension. Three layers, each
+# degrading gracefully where its module is absent; do not rely on the CMS's
+# root .htaccess being the only thing standing here.
+<IfModule mod_php.c>
+	php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+	php_flag engine off
+</IfModule>
+<IfModule mod_mime.c>
+	RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phar
+	RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phar
+</IfModule>
+<FilesMatch "\.(?i:ph(p[0-9]?|tml|ar))(\.|$)">
+	<IfModule mod_authz_core.c>
+		Require all denied
+	</IfModule>
+	<IfModule !mod_authz_core.c>
+		Deny from all
+	</IfModule>
+</FilesMatch>
+
 # The pipeline keeps its state here, and these files are non-empty, so the
 # !-s rule below hands them straight to Apache as static downloads:
 #   .capabilities.json  the absolute path of the ImageMagick binary and a map

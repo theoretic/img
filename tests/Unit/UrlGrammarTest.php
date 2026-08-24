@@ -50,6 +50,24 @@ final class UrlGrammarTest extends TestCase
         UrlGrammar::canonicalPath("1044/photo.jpg\0.txt", $this->site->config());
     }
 
+    /** Same rule on the decoded form: a literal %00 is a null byte after decoding. */
+    public function testRejectsPercentEncodedNullByte(): void
+    {
+        $this->expectException(NotFoundException::class);
+        UrlGrammar::canonicalPath('1044/photo.jpg%00.txt', $this->site->config());
+    }
+
+    /**
+     * Current-directory segments resolve to the same inode under a different
+     * URL string. Apache strips them before mod_rewrite runs; the demo router
+     * and direct Pipeline callers do not, so normalize() has to.
+     */
+    public function testDotSegmentsAreNormalisedAway(): void
+    {
+        self::assertSame('1044/400x/photo.jpg', UrlGrammar::normalize('1044/./400x/photo.jpg'));
+        self::assertSame('1044/400x/photo.jpg', UrlGrammar::normalize('./1044/././400x/photo.jpg'));
+    }
+
     /**
      * The containment check has to be per segment: a blanket search for '..'
      * also rejects perfectly ordinary filenames.
@@ -235,6 +253,46 @@ final class UrlGrammarTest extends TestCase
         $config = $this->site->config();
 
         self::assertSame('1044/photo.blur.jpg.avif', UrlGrammar::canonicalPath('1044/photo.blur0,2.jpg.avif', $config));
+    }
+
+    /**
+     * Multi-parameter filters quantise coarsely: at step 1, modulate admitted
+     * 201^3 ≈ 8.1M canonical tokens per image, every one a distinct derivative.
+     * Off-step values snap through the same 301 as off-ladder geometry.
+     */
+    public function testModulateQuantisesToTheCoarseStep(): void
+    {
+        $config = $this->site->config();
+
+        self::assertSame(
+            '1044/photo.modulate120.jpg',
+            UrlGrammar::canonicalPath('1044/photo.modulate115,95,104.jpg', $config),
+            '95 and 104 round to the 100 default and drop from the right',
+        );
+        self::assertSame(
+            '1044/photo.modulate110,90.jpg',
+            UrlGrammar::canonicalPath('1044/photo.modulate110,90,100.jpg', $config),
+        );
+    }
+
+    /**
+     * The allowlist decides whether a token is a filter at all. Unlisted names
+     * stay part of the filename, exactly like an unregistered one.
+     */
+    public function testFilterAllowlistGovernsTokenRecognition(): void
+    {
+        $config = $this->site->config(['filters' => ['darken']]);
+
+        self::assertSame(
+            '1044/photo.darken.jpg',
+            UrlGrammar::canonicalPath('1044/photo.darken25.jpg', $config),
+            'a listed filter still canonicalises (25 is the default and drops)',
+        );
+        self::assertSame(
+            '1044/photo.blur2.jpg',
+            UrlGrammar::canonicalPath('1044/photo.blur2.jpg', $config),
+            'an unlisted filter token is a plain filename segment',
+        );
     }
 
     /**

@@ -14,7 +14,7 @@ Merged from the best variant of each part across the family, with every known pr
 /site/assets/files/1044/400x800/photo.jpg            resize to fill, focal-point crop
 /site/assets/files/1044/400x/photo.jpg               width 400, source aspect kept
 /site/assets/files/1044/x800/photo.jpg               height 800
-/site/assets/files/1044/400x800f/photo.jpg           cover the box, no crop
+/site/assets/files/1044/400x800f/photo.jpg           fit the box, no crop (legacy)
 /site/assets/files/1044/400x/photo.dim-25.jpg.avif   filter, then convert
 ```
 
@@ -23,12 +23,18 @@ Merged from the best variant of each part across the family, with every known pr
 | Geometry | Meaning |
 |---|---|
 | `400x800` | Resize to fill the box, then crop to exactly 400×800. The delivered aspect is the **box** aspect. |
-| `400x800f` | Resize so the box is covered with the **source** aspect kept and nothing cropped. |
+| `400x800f` | Fit the box with the **source** aspect kept, nothing cropped — exactly the pixels an `object-fit: contain` display of that box shows. Legacy request form: answered with a 302 to the single-axis canonical (below). |
 
-The `f` mode exists because the client cannot make that decision. It knows the placeholder box but not the source image, so it cannot tell which axis binds — and deciding by width alone under-fills every box taller than the source. A 380×800 placeholder against an 800×200 source asked for `/400x/` and got back 400×100. The server has `getimagesize()`, so it picks the binding axis itself:
+`f` exists for clients that know their box but not the source image, so they cannot tell which axis the contain display binds. The server has `getimagesize()`, so it decides:
 
-- `boxAspect >= srcAspect` → width binds
-- `boxAspect  < srcAspect` → height binds
+- `boxAspect >= srcAspect` → the display pillarboxes, **height** binds
+- `boxAspect  < srcAspect` → the display letterboxes, **width** binds
+
+An f request stores nothing under its own name. The delivered image is uncropped, so one axis fully determines it — the free axis would only multiply cache keys over identical bytes. The pipeline answers with a **302** to the single-axis canonical form (`400x800f` against a landscape source → `400x`), which generates and serves as usual; `f` is a request form, never a storage form. 302 rather than 301 because replacing the source can flip the binding axis; the redirect self-heals within its max-age 3600.
+
+Current adaptive-media builds do not emit `f` at all: they resolve the binding axis client-side (from `data-src-aspect` or the learned-ratio cache) and ask single-axis directly, falling back to plain width-only — always sufficient for a contain display — when the aspect is unknown. The grammar keeps parsing `WxHf` so old URLs in cached HTML resolve forever.
+
+**History.** Until 24.08.26 `f` meant cover-the-box-without-crop: the *max* axis, guaranteeing the image spanned the box on both axes. Its only consumer displayed the result with `object-fit: contain`, which shows the *min* axis — the guarantee over-delivered by up to the square of the aspect mismatch (a 380×800 box over a 4:1 source fetched ~64× the displayed pixels). The under-fill defect that motivated it (that same box against an 800×200 source getting 400×100) was really a cover expectation, which the crop mode serves properly, focal point included. f-shaped files generated before the change remain on disk and are served statically until `atispro-img clear`.
 
 Requests without the suffix behave exactly as they always have, so existing URLs across the fleet are unaffected.
 
@@ -48,13 +54,15 @@ Parameters are whole numbers, and every step in the registry is integral. They c
 |---|---|---|
 | `imagesPath` | — | Required. Holds originals and derivatives. |
 | `publicBase` | `/site/assets/files` | URL prefix that maps onto `imagesPath`. |
-| `widths` / `heights` | 200…3000 / 200…2000 | The allowed geometry rungs. Must match the ladders in `@atispro/core` `adaptive-media.js`. |
+| `widths` / `heights` | 200…3000, identical | The allowed geometry rungs — one ladder for both axes. Must match `sizes` in `@atispro/core` `adaptive-media.js`. |
 | `geometryPolicy` | `redirect` | `redirect` \| `strict` \| `off` — see below. |
-| `widthMax` / `heightMax` | 3000 / 2000 | Hard ceilings. |
+| `widthMax` / `heightMax` | 3000 / 3000 | Hard ceilings. |
 | `maxPixels` | 50 M | Decompression-bomb guard. |
-| `formats` | jpeg, jpg, png, webp, avif, heic, heif | Also the output allowlist. |
+| `formats` | jpeg, jpg, png, webp, avif, heic, heif | Also the output allowlist. Serving an existing upload as-is is exempt, so a GIF/TIFF/BMP original stays servable; transforming one is refused. |
+| `filters` | all registered | Filter names URLs may invoke. Every parameter combination is a cache entry, so a site should list only what it uses (`[]` disables filters). |
+| `derivativeCap` | 100 | Backstop: max derivatives per source per directory; 0 disables. |
 | `sharpen` | radius 0, sigma 0.7 | Applied after resize and crop. |
-| `limits` | area, memory, map, time | Passed to `-limit` / `setResourceLimit`. |
+| `limits` | area, memory, map, disk, time | Passed to `-limit` / `setResourceLimit`. `disk` matters: without it, exceeding memory/map spills the pixel cache to disk unbounded. |
 | `externalEncoders` | none | Per-format external encoder, gated on the source format. |
 | `imagemagickPath` | Windows dev path, else unset | Optional. Unset means "find it on `PATH`", which is what most hosts want. |
 | `processor` | `auto` | `auto` \| `imagick` \| `cli`. |
@@ -149,13 +157,16 @@ that file would have been generated from. `screenshot.png.jpg` with no
 `screenshot.png` beside it is an upload, and both `clear` and the writer leave it
 alone; a directory called `2x4` is content, not a geometry cache.
 
-One namespace is reserved: `name.<imgext>.<imgext>` sitting beside
-`name.<imgext>` is a conversion, and is indistinguishable from one. Do not
-upload files of that shape.
+Two namespaces are reserved. `name.<imgext>.<imgext>` sitting beside
+`name.<imgext>` is a conversion, and is indistinguishable from one. And a
+content directory named like an on-ladder geometry (`400x`, `600x450`) is
+indistinguishable from a cache directory: an upload inside one, with a
+same-named file in the parent, reads as that file's derivative and can be
+overwritten by it. Do not use either shape for real content.
 
 ## Cache invalidation
 
-`Pipeline::VERSION` and `Config::hash()` are written to a stamp file in `imagesPath`. A derivative older than that stamp is regenerated on next request, so changing the filter registry, the encoder settings or the sharpen parameters invalidates existing files without anyone having to remember to clear them.
+`Pipeline::VERSION` and `Config::hash()` are written to a stamp file in `imagesPath`. A derivative older than that stamp is regenerated on next request, so changing the encoder settings or the sharpen parameters invalidates existing files without anyone having to remember to clear them. Code changes — the filter registry included — are covered only by a `Pipeline::VERSION` bump; the config hash cannot see them.
 
 Editing an original in place also invalidates everything made from it: a derivative older than its own source is rebuilt. Mtimes have one-second granularity, so an edit landing in the very same second as the build is the one gap — the next edit closes it.
 

@@ -17,6 +17,7 @@ final readonly class Result
     private function __construct(
         public string $kind,
         public string $path,
+        public bool $permanent = true,
     ) {
     }
 
@@ -26,10 +27,16 @@ final readonly class Result
         return new self(self::SERVE, $file);
     }
 
-    /** @param string $url Canonical URL to redirect to. */
-    public static function redirect(string $url): self
+    /**
+     * @param string $url Canonical URL to redirect to.
+     * @param bool $permanent False when the mapping depends on the source
+     *        image's current content (its dimensions or aspect) rather than on
+     *        the URL alone — replacing the source must not leave clients
+     *        holding a cached 301.
+     */
+    public static function redirect(string $url, bool $permanent = true): self
     {
-        return new self(self::REDIRECT, $url);
+        return new self(self::REDIRECT, $url, $permanent);
     }
 
     public function isRedirect(): bool

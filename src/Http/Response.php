@@ -102,7 +102,14 @@ final class Response
         readfile($file);
     }
 
-    public static function redirect(string $location): void
+    /**
+     * @param bool $permanent False for a redirect whose validity depends on the
+     *        source image's current content — the box-covers-source collapse and
+     *        the cover-fit (`f`) binding-axis collapse both flip when the source
+     *        is replaced, and a 301 cached for a week would keep sending clients
+     *        to the stale target. Those get a 302 with a short freshness.
+     */
+    public static function redirect(string $location, bool $permanent = true): void
     {
         // Percent-encoded per segment, which is also what makes header
         // injection impossible: rawurlencode leaves nothing outside the
@@ -117,9 +124,9 @@ final class Response
         // the canonical path it is supposed to be arriving at.
         $encoded = str_replace('%2C', ',', $encoded);
 
-        self::send('HTTP/1.1 301 Moved Permanently');
+        self::send($permanent ? 'HTTP/1.1 301 Moved Permanently' : 'HTTP/1.1 302 Found');
         self::send('Location: ' . $encoded);
-        self::send('Cache-Control: public, max-age=' . self::MAX_AGE);
+        self::send('Cache-Control: public, max-age=' . ($permanent ? self::MAX_AGE : 3600));
     }
 
     public static function notFound(): void
@@ -136,6 +143,17 @@ final class Response
     {
         self::send('HTTP/1.1 405 Method Not Allowed');
         self::send('Allow: GET, HEAD');
+    }
+
+    /**
+     * Something outside the request's control broke — a config mistake, an
+     * escaped Error. Deliberately bodyless: the message belongs in error_log,
+     * not on the wire.
+     */
+    public static function serverError(): void
+    {
+        self::send('HTTP/1.1 500 Internal Server Error');
+        self::send('Cache-Control: no-store');
     }
 
     /**
