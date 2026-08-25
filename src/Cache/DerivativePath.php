@@ -55,7 +55,7 @@ final class DerivativePath
 
         // Inside a geometry directory the source lives one level up; otherwise
         // it would have to sit beside the file.
-        $inGeometryDir = self::isGeometryDirName(basename($dir), $config);
+        $inGeometryDir = self::isGeometryDirName(basename($dir));
         $sourceDir = $inGeometryDir ? dirname($dir) : $dir;
 
         foreach (self::sourceCandidates($tokens, $ext, $inGeometryDir) as $candidate) {
@@ -72,24 +72,33 @@ final class DerivativePath
      * True when a directory name denotes a geometry cache directory rather than
      * ordinary content.
      *
-     * The ladder check is what keeps a product directory named `2x4` or `10x`
-     * from being mistaken for one; per-file corroboration in isDerivative()
-     * then covers the rest.
+     * Syntax only, and deliberately: the ladder is a statement about what this
+     * pipeline will generate *from now on*, not about what is on disk. Real
+     * trees are full of `1024x768`, `640x480`, `300x225` and `2880x` from
+     * before the ladder existed or from a policy that has since changed, and
+     * gating on membership meant the cleaner disowned all of it — so it
+     * accumulated permanently, which is the opposite of what a cache cleaner is
+     * for.
+     *
+     * What keeps a product directory called `2x4` safe is therefore **not** the
+     * ladder but the corroboration in {@see isDerivative()}: a file here is
+     * removed only when the source it would have been generated from is on
+     * disk one level up. `2x4/diagram.png` with no `diagram.png` above it is
+     * untouched, and the whole-directory deletion that destroyed such a gallery
+     * is not something this code can express at all.
+     *
+     * The residual case is narrow and worth stating: a content directory whose
+     * name parses as a geometry, holding an image whose name also exists in the
+     * directory above it, is indistinguishable from a cache directory. Do not
+     * use `WxH` as a content directory name inside the images tree.
+     *
+     * Takes no Config on purpose — the answer does not depend on one, and
+     * callers that have no pipeline config (an audit pass, a report) need the
+     * same definition rather than a private copy of the regex.
      */
-    public static function isGeometryDirName(string $name, Config $config): bool
+    public static function isGeometryDirName(string $name): bool
     {
-        $geometry = Geometry::fromSegment($name);
-        if ($geometry === null) {
-            return false;
-        }
-
-        // With the ladder unenforced any integer geometry is legitimate, so the
-        // membership test would reject real cache directories.
-        if ($config->geometryPolicy === Config::GEOMETRY_OFF) {
-            return true;
-        }
-
-        return $geometry->isOnLadder($config);
+        return Geometry::fromSegment($name) !== null;
     }
 
     /**
@@ -154,8 +163,21 @@ final class DerivativePath
         return $tokens;
     }
 
-    private static function isImageExtension(string $ext): bool
+    /**
+     * Public because the extension list is not private knowledge: every
+     * consumer that reasons about these filenames needs the same list, and the
+     * three copies that existed before this was exposed had already drifted.
+     */
+    public static function isImageExtension(string $ext): bool
     {
         return in_array($ext, self::IMAGE_EXTENSIONS, true);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function imageExtensions(): array
+    {
+        return self::IMAGE_EXTENSIONS;
     }
 }

@@ -116,7 +116,7 @@ final class Cleaner
 
             // Prune only what we emptied, or a cache directory that was already
             // empty — never an unrelated empty content directory.
-            if ($removing === 0 && !DerivativePath::isGeometryDirName(basename($path), $this->config)
+            if ($removing === 0 && !DerivativePath::isGeometryDirName(basename($path))
                 && basename($path) !== self::LOCK_DIR) {
                 continue;
             }

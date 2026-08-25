@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Atispro\Img\Tests\Unit;
 
 use Atispro\Img\Cache\Cleaner;
+use Atispro\Img\Request\Geometry;
 use Atispro\Img\Tests\Support\TempSite;
 use PHPUnit\Framework\TestCase;
 
@@ -42,6 +43,7 @@ final class CleanerTest extends TestCase
         $this->write('1044/400x/photo.dim-25.jpg');
         $this->write('1044/400x/nested/photo.jpg.webp');
         $this->write('1044/400x800f/photo.jpg');
+        $this->write('1044/1024x768/photo.jpg.avif');   // off-ladder, still ours
         $this->write('1044/x800/photo.jpg.avif');
         $this->write('1044/photo.jpg.avif');        // format change beside the original
         $this->write('1044/photo.dim-25.jpg');      // filter beside the original
@@ -105,6 +107,11 @@ final class CleanerTest extends TestCase
     /**
      * Any directory whose name looked like WxH used to be deleted recursively,
      * originals and all — so a product gallery called `2x4` was destroyed.
+     *
+     * The ladder used to be the thing that spared this directory. It no longer
+     * is: corroboration is, and it is the stronger guarantee of the two, since
+     * it holds for `2x4` and `1024x768` alike rather than for whichever
+     * geometries happen to be configured today.
      */
     public function testKeepsContentDirectoriesThatMerelyLookLikeGeometry(): void
     {
@@ -113,6 +120,26 @@ final class CleanerTest extends TestCase
         (new Cleaner($this->site->config()))->clean();
 
         self::assertTrue($this->site->exists('2x4/diagram.png'));
+    }
+
+    /**
+     * The ladder says what this pipeline will generate next, not what is on
+     * disk. A tree carries geometries from before the ladder existed, and while
+     * membership gated this they were disowned and accumulated forever.
+     */
+    public function testRemovesDerivativesInOffLadderGeometryDirectories(): void
+    {
+        $this->populate();
+
+        self::assertFalse(
+            (new Geometry(1024, 768, ''))->isOnLadder($this->site->config()),
+            'the fixture geometry must be off-ladder or this test proves nothing',
+        );
+
+        (new Cleaner($this->site->config()))->clean();
+
+        self::assertFalse($this->site->exists('1044/1024x768/photo.jpg.avif'));
+        self::assertTrue($this->site->exists('1044/photo.jpg'), 'the source it was made from stays');
     }
 
     /** A user's file that happens to end .tmp is not ours to delete. */
