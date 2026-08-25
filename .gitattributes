@@ -1,0 +1,23 @@
+# Keep the distributed package to what a consumer actually runs: src/ (the only
+# psr-4 root), bin/atispro-img, and site-stub/ (the drop-in kit sites copy from).
+#
+# This governs both ways the package is installed. `git archive` builds the dist
+# zip for a normal VCS install; a Composer path repository with symlink:false
+# applies the same rules as a filter while mirroring the working directory. That
+# second case is why /vendor and /.phpunit.result.cache are listed even though
+# they are untracked and no archive would ever have contained them.
+#
+# Without this file a consuming site received 75 MB: 56 MB of phpstan/phpunit
+# under the package's own vendor/, plus ~17 MB of demo and sample imagery. With
+# it, 250 KB.
+
+/.gitattributes		export-ignore
+/.gitignore		export-ignore
+/.phpunit.result.cache	export-ignore
+/vendor			export-ignore
+/demo			export-ignore
+/samples		export-ignore
+/stubs			export-ignore
+/tests			export-ignore
+/phpstan.neon		export-ignore
+/phpunit.xml		export-ignore
