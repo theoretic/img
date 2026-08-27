@@ -1,8 +1,6 @@
 # atispro/img-pipeline
 
-On-demand image derivatives for the site family, consolidated from the ~17 per-site `webroot/api/img/` installs into one source of truth. Geometry, format and filters are encoded in the URL path; the first request generates the file, and every request after that is served statically by Apache.
-
-Merged from the best variant of each part across the family, with every known production fix included and the security holes closed.
+On-demand image derivatives. Geometry, format and filters are encoded in the URL path; the first request generates the file, and every request after that is served statically by Apache.
 
 **Contract:** the URL is the cache key. Anything that is not in canonical form is redirected to the URL that is, so one image never accumulates near-duplicate derivatives under different names.
 
