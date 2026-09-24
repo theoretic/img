@@ -27,6 +27,9 @@ use Atispro\Img\Request\Geometry;
  * is treated as ours. `name.<imgext>.<imgext>` beside `name.<imgext>` is the
  * conversion namespace — the URL grammar reserves it, and uploads must not use
  * that shape. Everything outside it is protected.
+ *
+ * One exception inside it: an animated AVIF is never ours, whatever its name,
+ * because the pipeline cannot write one. See {@see isAvifSequence()}.
  */
 final class DerivativePath
 {
@@ -61,6 +64,40 @@ final class DerivativePath
         foreach (self::sourceCandidates($tokens, $ext, $inGeometryDir) as $candidate) {
             $source = $sourceDir . '/' . $candidate;
             if ($source !== $path && is_file($source)) {
+                // Corroborated by name, but the pipeline cannot have written an
+                // image sequence: ImageMagick stores the frames of an animated
+                // source as separate stills under the plain `avif` brand. An
+                // `avis` file was encoded by something else (ffmpeg, avifenc),
+                // nothing here could rebuild it, and it must be neither swept
+                // nor overwritten, whatever its name says.
+                return !($ext === 'avif' && self::isAvifSequence($path));
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * True when $path is an AVIF image sequence — an animated AVIF — by its
+     * `ftyp` box: `avis` as the major brand or among the compatible ones.
+     * Only the header is read.
+     */
+    public static function isAvifSequence(string $path): bool
+    {
+        $head = @file_get_contents($path, false, null, 0, 64);
+        if ($head === false || strlen($head) < 16 || substr($head, 4, 4) !== 'ftyp') {
+            return false;
+        }
+
+        // Major brand at 8, minor version at 12, compatible brands from 16 to
+        // the end of the box.
+        if (substr($head, 8, 4) === 'avis') {
+            return true;
+        }
+
+        $size = min(strlen($head), (int) unpack('N', $head)[1]);
+        for ($at = 16; $at + 4 <= $size; $at += 4) {
+            if (substr($head, $at, 4) === 'avis') {
                 return true;
             }
         }
