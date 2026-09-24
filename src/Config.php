@@ -29,6 +29,7 @@ final class Config
      * @param array<string,array<string,mixed>> $formats extension => encoder settings.
      * @param list<string>|null $filters Filter names a URL may invoke; null = every registered filter.
      * @param int $derivativeCap Max derivatives per source per directory; 0 disables the cap.
+     * @param string $resizeFilter ImageMagick resampling filter name; '' leaves the choice to ImageMagick.
      * @param array{radius:float,sigma:float} $sharpen Applied after resize/crop.
      * @param array<string,string> $limits ImageMagick resource limits, name => value.
      * @param array<string,array{bin:string,args:list<string>,from:list<string>}> $externalEncoders
@@ -47,6 +48,7 @@ final class Config
         public readonly array $formats,
         public readonly ?array $filters,
         public readonly int $derivativeCap,
+        public readonly string $resizeFilter,
         public readonly array $sharpen,
         public readonly array $limits,
         public readonly string $imagemagickPath,
@@ -125,6 +127,14 @@ final class Config
             // of how the request space was reached. Legitimate use sits far
             // below it: formats x the filters a site actually uses. 0 disables.
             'derivativeCap' => 100,
+
+            // Resampling filter for every resize, by ImageMagick name (`magick
+            // -list filter`). Named because ImageMagick's own choice depends on
+            // the image: Lanczos for an opaque downscale, but the visibly softer
+            // Mitchell as soon as the source has an alpha channel — even a fully
+            // opaque one, which every ProcessWire PNG variation carries. '' leaves
+            // it to ImageMagick.
+            'resizeFilter' => 'Lanczos',
 
             // radius 0 lets ImageMagick pick; sigma controls strength.
             'sharpen' => ['radius' => 0, 'sigma' => 0.7],
@@ -206,6 +216,13 @@ final class Config
             throw new ConfigException("unknown processor: {$processor}");
         }
 
+        $resizeFilter = (string) $c['resizeFilter'];
+        // Reaches argv as a value and Imagick as a constant name: letters only
+        // keeps it from ever being read as an option or a path.
+        if ($resizeFilter !== '' && preg_match('/^[A-Za-z]+$/', $resizeFilter) !== 1) {
+            throw new ConfigException("resizeFilter must be a filter name: {$resizeFilter}");
+        }
+
         $sharpen = (array) $c['sharpen'];
 
         return new self(
@@ -226,6 +243,7 @@ final class Config
                     (array) $c['filters'],
                 )),
             derivativeCap: (int) $c['derivativeCap'],
+            resizeFilter: $resizeFilter,
             sharpen: [
                 'radius' => (float) ($sharpen['radius'] ?? 0),
                 'sigma' => (float) ($sharpen['sigma'] ?? 0.7),
@@ -299,6 +317,7 @@ final class Config
             $this->widthMax,
             $this->heightMax,
             $this->formats,
+            $this->resizeFilter,
             $this->sharpen,
             $this->externalEncoders,
         ])), 0, 16);

@@ -327,7 +327,103 @@ final class PipelineTest extends TestCase
         self::assertSame('image/webp', $info['mime']);
     }
 
+    /**
+     * 4:4:4 in the bytes, not just in the argv. The CLI used to pass
+     * -sampling-factor 1x1, which the AVIF coder ignores, so every AVIF was
+     * 4:2:0 and red text in screenshots bled into its background.
+     */
+    public function testAvifIsFullChroma(): void
+    {
+        $this->fixtures();
+
+        foreach ($this->backends() as $backend) {
+            $result = (new Pipeline($this->site->config(['processor' => $backend])))
+                ->handle('1044/200x/photo.jpg.avif');
+            $colour = self::colourItem($result->path, $backend);
+
+            self::assertSame(1, $colour['profile'], "{$backend}: 4:4:4 needs the High profile");
+            self::assertSame([0, 0], $colour['subsampling'], "{$backend}: chroma is subsampled");
+        }
+    }
+
+    public function testOpaqueAlphaIsDropped(): void
+    {
+        $this->site->pngOpaqueAlpha('1044/variation.png', 800, 500);
+
+        foreach ($this->backends() as $backend) {
+            $result = (new Pipeline($this->site->config(['processor' => $backend])))
+                ->handle('1044/200x/variation.png.avif');
+            self::colourItem($result->path, $backend);
+
+            self::assertSame(0, self::alphaItems($result->path), "{$backend}: an opaque alpha plane was encoded");
+        }
+    }
+
+    /** The other half of the opaque-alpha drop: real transparency is kept. */
+    public function testTransparencySurvivesAvif(): void
+    {
+        $this->fixtures();
+        if (!Capabilities::avifAlpha($this->site->config())) {
+            self::markTestSkipped('this ImageMagick build flattens AVIF alpha');
+        }
+
+        foreach ($this->backends() as $backend) {
+            $result = (new Pipeline($this->site->config(['processor' => $backend])))
+                ->handle('1044/200x/logo.png.avif');
+            self::colourItem($result->path, $backend);
+
+            self::assertSame(1, self::alphaItems($result->path), "{$backend}: the alpha plane was lost");
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    /**
+     * Every av1C box in an AVIF: one per coded item. The alpha plane is coded
+     * as its own monochrome item.
+     *
+     * @return list<array{profile:int,monochrome:bool,subsampling:array{0:int,1:int}}>
+     */
+    private static function av1c(string $path): array
+    {
+        $bytes = (string) file_get_contents($path);
+        $out = [];
+
+        for ($at = strpos($bytes, 'av1C'); $at !== false; $at = strpos($bytes, 'av1C', $at + 4)) {
+            // After the type: marker/version, then profile(3)|level(5), then
+            // tier, high_bitdepth, twelve_bit, monochrome, subsampling x, y.
+            $profile = ord($bytes[$at + 5]) >> 5;
+            $flags = ord($bytes[$at + 6]);
+            $out[] = [
+                'profile' => $profile,
+                'monochrome' => (bool) ($flags >> 4 & 1),
+                'subsampling' => [$flags >> 3 & 1, $flags >> 2 & 1],
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return array{profile:int,monochrome:bool,subsampling:array{0:int,1:int}}
+     */
+    private static function colourItem(string $path, string $backend): array
+    {
+        $info = getimagesize($path);
+        if ($info === false || $info['mime'] !== 'image/avif') {
+            self::markTestSkipped("{$backend}: this build does not write AVIF");
+        }
+
+        $colour = array_values(array_filter(self::av1c($path), static fn (array $b): bool => !$b['monochrome']));
+        self::assertCount(1, $colour, "{$backend}: expected exactly one colour item");
+
+        return $colour[0];
+    }
+
+    private static function alphaItems(string $path): int
+    {
+        return count(array_filter(self::av1c($path), static fn (array $b): bool => $b['monochrome']));
+    }
 
     private function fixtures(): void
     {

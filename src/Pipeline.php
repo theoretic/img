@@ -34,7 +34,7 @@ final class Pipeline
      * that predate it — the URL is the cache key and cannot carry a version, so
      * staleness is decided by age instead.
      */
-    public const VERSION = '1';
+    public const VERSION = '2';
 
     private readonly Store $store;
 

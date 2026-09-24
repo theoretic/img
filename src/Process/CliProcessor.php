@@ -19,6 +19,9 @@ use Atispro\Img\Request\ImageRequest;
  */
 final readonly class CliProcessor implements ProcessorInterface
 {
+    /** Source formats that can carry an alpha channel, and so are worth probing. */
+    private const ALPHA_SOURCES = ['png', 'webp', 'gif', 'avif', 'heic', 'heif', 'tif', 'tiff'];
+
     public function __construct(private Config $config)
     {
     }
@@ -30,15 +33,20 @@ final readonly class CliProcessor implements ProcessorInterface
             throw new BackendException('no runnable ImageMagick binary');
         }
 
-        // The alpha probe costs a process spawn, so only ask when the answer
-        // could change anything: AVIF output on a build that flattens it.
+        // The alpha probe costs a process spawn, so it is only made for a
+        // source that can carry alpha at all. Its answer does two jobs: AVIF on
+        // a build that flattens alpha falls back to WebP, and a channel that is
+        // present but fully opaque — every ProcessWire PNG variation has one —
+        // is dropped. Left in, it is encoded as a separate AVIF alpha plane
+        // that says nothing, at about a tenth of a small file.
         $avifAlphaSupported = Capabilities::avifAlpha($this->config);
-        $mayNeedAlpha = $request->extension === 'avif' && !$avifAlphaSupported;
+        $probed = in_array($request->srcExtension, self::ALPHA_SOURCES, true);
+        $sourceHasAlpha = $probed && $this->hasAlpha($bin, $request->srcFile);
 
         $plan = EncodePlan::for(
             $request,
             $this->config,
-            $mayNeedAlpha && $this->hasAlpha($bin, $request->srcFile),
+            $sourceHasAlpha,
             $avifAlphaSupported,
         );
 
@@ -58,7 +66,14 @@ final readonly class CliProcessor implements ProcessorInterface
         // selector characters ImageMagick would otherwise interpret.
         array_push($args, $request->srcFile, '-auto-orient', '-strip');
 
+        if ($probed && !$sourceHasAlpha) {
+            array_push($args, '-alpha', 'off');
+        }
+
         if ($plan->needsResize()) {
+            if ($this->config->resizeFilter !== '') {
+                array_push($args, '-filter', $this->config->resizeFilter);
+            }
             // '!' forces the exact size. The plan already resolved both axes,
             // and a bare WxH would be read as fit-inside — which is how the two
             // backends came to disagree by a pixel.
@@ -98,7 +113,10 @@ final readonly class CliProcessor implements ProcessorInterface
             array_push($args, '-define', "webp:method={$format['method']}");
         }
         if ($plan->noChromaSubsampling) {
-            array_push($args, '-sampling-factor', '1x1');
+            // 4:4:4. The AVIF coder goes through libheif, which ignores
+            // -sampling-factor: that spelling wrote 4:2:0 all along, and red
+            // text in screenshots bled into the background at small sizes.
+            array_push($args, '-define', 'heic:chroma=444');
         }
 
         // Name the output coder explicitly. Left to the filename, ImageMagick
@@ -118,10 +136,8 @@ final readonly class CliProcessor implements ProcessorInterface
     }
 
     /**
-     * True when the source carries a non-opaque alpha channel.
-     *
-     * Only asked when it could change the answer — the probe costs a process
-     * spawn, and it only matters for AVIF on a build that cannot store alpha.
+     * True when the source carries a non-opaque alpha channel. False for no
+     * alpha channel, and for one that is fully opaque.
      */
     private function hasAlpha(string $bin, string $srcFile): bool
     {

@@ -74,6 +74,8 @@ function demo_cacheListing(string $root): array
  *
  * expect: [width|null, height|null] — null means "derived, do not assert"
  * type:   expected Content-Type, when it is worth pinning
+ * avif:   ['chroma' => '4:4:4', 'alpha' => bool] — read from the av1C boxes when
+ *         the response is AVIF
  */
 $sections = [
     [
@@ -81,28 +83,29 @@ $sections = [
         'blurb' => 'The same tall box against sources of every shape. <code>400x/</code> is what the client '
             . 'used to ask for on its own: it constrains the width and lets the height fall where it may, '
             . 'which under-fills the box whenever the source is wider than the box is. <code>400x800f/</code> '
-            . 'is the fix — the server compares the box aspect against the source aspect and constrains '
-            . 'whichever axis actually binds.',
+            . 'compares the box aspect against the source aspect and delivers the contain display: aspect '
+            . 'kept, nothing cropped, and no more pixels than the box shows. It is a legacy form now, '
+            . 'redirected to the single-axis URL of whichever axis binds.',
         'cases' => [
             ['src' => 'mars.jpg', 'path' => '400x/mars.jpg', 'expect' => [400, null], 'note' => 'width only — height lands near 239, nowhere near 800'],
             ['src' => 'mars.jpg', 'path' => 'x800/mars.jpg', 'expect' => [null, 800], 'note' => 'height only'],
             ['src' => 'mars.jpg', 'path' => '400x800/mars.jpg', 'expect' => [400, 800], 'note' => 'crop: exactly the box, centre-weighted'],
-            ['src' => 'mars.jpg', 'path' => '400x800f/mars.jpg', 'expect' => [null, 800], 'note' => 'cover: height binds, width ≈1341, nothing cropped'],
+            ['src' => 'mars.jpg', 'path' => '400x800f/mars.jpg', 'expect' => [400, 239], 'note' => 'contain: width binds, → 400x/'],
 
             ['src' => 'parrot.jpeg', 'path' => '400x/parrot.jpeg', 'expect' => [400, null], 'note' => 'width only'],
             ['src' => 'parrot.jpeg', 'path' => '400x800/parrot.jpeg', 'expect' => [400, 800], 'note' => 'crop'],
-            ['src' => 'parrot.jpeg', 'path' => '400x800f/parrot.jpeg', 'expect' => [null, 800], 'note' => 'cover: height binds, width ≈627'],
+            ['src' => 'parrot.jpeg', 'path' => '400x800f/parrot.jpeg', 'expect' => [400, 510], 'note' => 'contain: width binds on a portrait source that is still wider than 1:2'],
 
             ['src' => 'pano.jpg', 'path' => '400x/pano.jpg', 'expect' => [400, null], 'note' => 'width only — 6:1 source, 67px tall'],
             ['src' => 'pano.jpg', 'path' => '400x800/pano.jpg', 'expect' => [200, 400], 'note' => 'crop, but the box is taller than the source: the whole box shrinks, 1:2 kept'],
-            ['src' => 'pano.jpg', 'path' => '400x800f/pano.jpg', 'expect' => [2400, 400], 'note' => 'cover is impossible — only 400 rows exist. Whole source, no upscale'],
+            ['src' => 'pano.jpg', 'path' => '400x800f/pano.jpg', 'expect' => [400, 67], 'note' => 'contain: width binds hard on a 6:1 source'],
 
             ['src' => 'tower.jpg', 'path' => '400x800/tower.jpg', 'expect' => [400, 800], 'note' => 'crop'],
-            ['src' => 'tower.jpg', 'path' => '400x800f/tower.jpg', 'expect' => [400, 1600], 'note' => 'cover: width binds, and it overshoots vertically'],
+            ['src' => 'tower.jpg', 'path' => '400x800f/tower.jpg', 'expect' => [200, 800], 'note' => 'contain: height binds on a 1:4 source, → x800/'],
             ['src' => 'tower.jpg', 'path' => '1600x400/tower.jpg', 'expect' => [400, 100], 'note' => 'landscape box on a 1:4 source — shrinks to fit, 4:1 kept'],
 
             ['src' => 'square.jpg', 'path' => '400x800/square.jpg', 'expect' => [400, 800], 'note' => 'crop'],
-            ['src' => 'square.jpg', 'path' => '400x800f/square.jpg', 'expect' => [800, 800], 'note' => 'cover: height binds on a square source'],
+            ['src' => 'square.jpg', 'path' => '400x800f/square.jpg', 'expect' => [400, 400], 'note' => 'contain: width binds on a square source'],
         ],
     ],
 
@@ -213,6 +216,24 @@ $sections = [
             ['src' => 'parrot.jpeg', 'path' => '2400x/parrot.jpeg.webp', 'expect' => [700, null], 'type' => 'image/webp'],
             ['src' => 'parrot.jpeg', 'path' => '3000x/parrot.jpeg.webp', 'expect' => [700, null], 'type' => 'image/webp', 'note' => 'same stored file as the row above'],
             ['src' => 'parrot.jpeg', 'path' => '2000x/parrot.jpeg.webp', 'expect' => [700, null], 'type' => 'image/webp', 'note' => 'and this one'],
+        ],
+    ],
+
+    [
+        'title' => 'Sharpness at small sizes',
+        'blurb' => 'What a site screenshot needs at thumbnail size, read from the AVIF container itself rather '
+            . 'than from the pixels. <b>4:4:4</b>: the <code>av1C</code> box of the colour item must say no '
+            . 'chroma subsampling (it takes the High profile); at 4:2:0 red text on white bleeds pink. '
+            . '<b>No empty alpha plane</b>: an RGBA source whose every pixel is opaque — every ProcessWire PNG '
+            . 'variation — must not be encoded with an alpha item, which says nothing and, left in, also '
+            . 'switched ImageMagick to its softer Mitchell filter. Real transparency must keep its plane. '
+            . 'Compare the 200 and 400 rows by eye: the resampling filter is Lanczos whatever the source.',
+        'cases' => [
+            ['src' => 'chroma.png', 'path' => '200x/chroma.png.avif', 'expect' => [200, 125], 'type' => 'image/avif', 'avif' => ['chroma' => '4:4:4', 'alpha' => false], 'note' => 'RGB source'],
+            ['src' => 'opaque.png', 'path' => '200x/opaque.png.avif', 'expect' => [200, 125], 'type' => 'image/avif', 'avif' => ['chroma' => '4:4:4', 'alpha' => false], 'note' => 'RGBA, fully opaque: the alpha channel is dropped before the resize'],
+            ['src' => 'opaque.png', 'path' => '400x/opaque.png.avif', 'expect' => [400, 250], 'type' => 'image/avif', 'avif' => ['chroma' => '4:4:4', 'alpha' => false]],
+            ['src' => 'mars.jpg', 'path' => '400x/mars.jpg.avif', 'expect' => [400, null], 'type' => 'image/avif', 'avif' => ['chroma' => '4:4:4', 'alpha' => false], 'note' => 'JPEG source: never had alpha'],
+            ['src' => 'logo.png', 'path' => '200x/logo.png.avif', 'expect' => [200, 200], 'avif' => ['chroma' => '4:4:4', 'alpha' => true], 'note' => 'real transparency keeps its plane. Served as WebP on a build that flattens AVIF alpha, and then not scored here'],
         ],
     ],
 ];
@@ -401,6 +422,7 @@ $totalCases = array_sum(array_map(static fn (array $s): int => count($s['cases']
 				'to' => $case['to'] ?? null,
 				'type' => $case['type'] ?? null,
 				'expect' => $case['expect'] ?? null,
+				'avif' => $case['avif'] ?? null,
 				'source' => $src !== null && isset($sources[$src]) ? [$sources[$src][0], $sources[$src][1]] : null,
 			];
 		?>
@@ -460,6 +482,20 @@ const settle = (card, pass, why) => {
 }
 
 const dims = (pair) => pair ? `${pair[0] ?? '—'} × ${pair[1] ?? '—'}` : '—'
+
+// Every av1C box in an AVIF, one per coded item; the alpha plane is its own
+// monochrome item. After the box type: marker/version, profile(3)|level(5),
+// then tier, high_bitdepth, twelve_bit, monochrome, subsampling x, subsampling y.
+const av1c = (bytes) => {
+	const out = []
+	for (let i = 0; i + 7 < bytes.length; i++) {
+		if (bytes[i] !== 0x61 || bytes[i + 1] !== 0x76 || bytes[i + 2] !== 0x31 || bytes[i + 3] !== 0x43) continue
+		const flags = bytes[i + 6]
+		out.push({ profile: bytes[i + 5] >> 5, mono: !!(flags >> 4 & 1), sub: [flags >> 3 & 1, flags >> 2 & 1] })
+	}
+	return out
+}
+const chromaName = ([x, y]) => x && y ? '4:2:0' : x ? '4:2:2' : '4:4:4'
 
 async function runCase(card) {
 	const c = JSON.parse(card.dataset.case)
@@ -543,6 +579,20 @@ async function runCase(card) {
 	}
 	if (c.type && type.split(';')[0].trim() !== c.type) {
 		problems.push(`type ${type}, expected ${c.type}`)
+	}
+
+	if (c.avif && type.startsWith('image/avif')) {
+		const items  = av1c(new Uint8Array(await blob.arrayBuffer()))
+		const colour = items.find(b => !b.mono)
+		const alpha  = items.some(b => b.mono)
+		if (!colour) problems.push('no colour av1C box found')
+		else {
+			got.textContent += `\n${chromaName(colour.sub)}, profile ${colour.profile}, alpha plane: ${alpha ? 'yes' : 'no'}`
+			if (c.avif.chroma && chromaName(colour.sub) !== c.avif.chroma)
+				problems.push(`chroma ${chromaName(colour.sub)}, expected ${c.avif.chroma}`)
+		}
+		if (c.avif.alpha === false && alpha) problems.push('an alpha plane was encoded for an opaque source')
+		if (c.avif.alpha === true && !alpha) problems.push('the alpha plane was lost')
 	}
 
 	// Rows with nothing pinned are shown, not scored. Redirect and stable rows

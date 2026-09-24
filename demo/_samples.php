@@ -56,8 +56,15 @@ function demo_sources(string $filesDir, string $samplesDir): array
         demo_alphaLogo($filesDir . '/logo.png', 512, 512);
     }
 
+    if (!is_file($filesDir . '/chroma.png')) {
+        demo_chroma($filesDir . '/chroma.png', 1600, 1000, false);
+    }
+    if (!is_file($filesDir . '/opaque.png')) {
+        demo_chroma($filesDir . '/opaque.png', 1600, 1000, true);
+    }
+
     $sources = [];
-    foreach (['mars.jpg', 'parrot.jpeg', 'pano.jpg', 'tower.jpg', 'square.jpg', 'tiny.png', 'logo.png'] as $name) {
+    foreach (['mars.jpg', 'parrot.jpeg', 'pano.jpg', 'tower.jpg', 'square.jpg', 'tiny.png', 'logo.png', 'chroma.png', 'opaque.png'] as $name) {
         $path = $filesDir . '/' . $name;
         if (!is_file($path)) {
             continue;
@@ -90,6 +97,8 @@ function demo_describe(string $name, int $w, int $h): string
         'parrot.jpeg' => 'photograph, small — most boxes exceed it',
         'logo.png' => 'transparent background',
         'tiny.png' => 'smaller than every ladder rung',
+        'chroma.png' => 'red text and hairlines on white — 4:2:0 bleeds them',
+        'opaque.png' => 'the same, RGBA with every pixel opaque — a ProcessWire variation',
         default => 'calibration grid',
     };
 
@@ -138,6 +147,64 @@ function demo_calibration(string $path, int $width, int $height): void
     demo_label($im, sprintf('%d x %d', $width, $height), $width, $height);
 
     str_ends_with($path, '.png') ? imagepng($im, $path) : imagejpeg($im, $path, 90);
+}
+
+/**
+ * Saturated detail on white: red and blue text and one-pixel lines — the
+ * content of a site screenshot, and exactly what chroma subsampling smears.
+ * With $rgba the file is written with an alpha channel that is fully opaque,
+ * the way ProcessWire writes every PNG variation.
+ */
+function demo_chroma(string $path, int $width, int $height, bool $rgba): void
+{
+    $im = imagecreatetruecolor($width, $height);
+    imagefilledrectangle($im, 0, 0, $width - 1, $height - 1, (int) imagecolorallocate($im, 255, 255, 255));
+
+    $red = (int) imagecolorallocate($im, 220, 20, 40);
+    $blue = (int) imagecolorallocate($im, 30, 60, 230);
+    $grey = (int) imagecolorallocate($im, 90, 90, 90);
+
+    // A header strip of menu-like red words, as on the screenshot this came from.
+    $words = ['Portfolio', 'Services', 'About', 'Contact'];
+    foreach ($words as $i => $word) {
+        demo_text($im, $word, 40 + $i * 360, 200, 4, $red);
+    }
+    imagefilledrectangle($im, 0, 290, $width - 1, 297, $grey);
+
+    // Hairlines, alternating colour, at a pitch the downscale has to resolve.
+    for ($x = 60; $x < $width - 60; $x += 24) {
+        imageline($im, $x, 330, $x, 660, $x % 48 === 12 ? $red : $blue);
+    }
+
+    // Body text in both colours, two sizes.
+    for ($row = 0; $row < 4; $row++) {
+        demo_text($im, 'Hard colour edges on white', 60, 700 + $row * 70, 3, $row % 2 ? $blue : $red);
+    }
+
+    demo_label($im, sprintf('%d x %d %s', $width, $height, $rgba ? 'RGBA' : 'RGB'), $width, $height);
+
+    if ($rgba) {
+        imagealphablending($im, false);
+        imagesavealpha($im, true);
+    }
+    imagepng($im, $path);
+}
+
+/** GD's bitmap font, scaled up with nearest-neighbour so its edges stay hard. */
+function demo_text(\GdImage $im, string $text, int $x, int $y, int $scale, int $colour): void
+{
+    $font = 5;
+    $w = imagefontwidth($font) * strlen($text);
+    $h = imagefontheight($font);
+
+    $strip = imagecreatetruecolor($w, $h);
+    $white = (int) imagecolorallocate($strip, 255, 255, 255);
+    imagefilledrectangle($strip, 0, 0, $w, $h, $white);
+    imagecolortransparent($strip, $white);
+    [$r, $g, $b] = [($colour >> 16) & 255, ($colour >> 8) & 255, $colour & 255];
+    imagestring($strip, $font, 0, 0, $text, (int) imagecolorallocate($strip, $r, $g, $b));
+
+    imagecopyresized($im, $strip, $x, $y, 0, 0, $w * $scale, $h * $scale, $w, $h);
 }
 
 /** A shape with real transparency, for the alpha-preservation cases. */

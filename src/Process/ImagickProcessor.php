@@ -41,6 +41,12 @@ final readonly class ImagickProcessor implements ProcessorInterface
 
             $im->stripImage();
 
+            // A channel that is present but fully opaque says nothing, and is
+            // encoded anyway: a separate AVIF alpha plane. Same as the CLI.
+            if (!$hasAlpha && $im->getImageAlphaChannel()) {
+                $im->setImageAlphaChannel(Imagick::ALPHACHANNEL_OFF);
+            }
+
             $plan = EncodePlan::for($request, $this->config, $hasAlpha, Capabilities::avifAlpha($this->config));
             if ($encodeAs !== $request->extension) {
                 // An intermediate for an external encoder.
@@ -48,9 +54,17 @@ final readonly class ImagickProcessor implements ProcessorInterface
             }
 
             if ($plan->needsResize()) {
-                // bestfit off: the plan's dimensions are already absolute, and
-                // letting Imagick re-fit them would reintroduce its own rounding.
-                $im->thumbnailImage($plan->resizeWidth, $plan->resizeHeight, false, false);
+                $filter = $this->filter();
+                if ($filter !== null) {
+                    // The configured filter, as the CLI's -filter/-resize.
+                    // thumbnailImage() picks its own and, past a 10x downscale,
+                    // point-samples to 5x the target first.
+                    $im->resizeImage($plan->resizeWidth, $plan->resizeHeight, $filter, 1.0);
+                } else {
+                    // bestfit off: the plan's dimensions are already absolute, and
+                    // letting Imagick re-fit them would reintroduce its own rounding.
+                    $im->thumbnailImage($plan->resizeWidth, $plan->resizeHeight, false, false);
+                }
             }
 
             if ($plan->crop !== null) {
@@ -80,8 +94,9 @@ final readonly class ImagickProcessor implements ProcessorInterface
             }
             if ($plan->noChromaSubsampling) {
                 // 4:4:4 — matches the CLI backend, and keeps hard colour edges
-                // in screenshots and logos from bleeding.
-                $im->setSamplingFactors(['1x1', '1x1', '1x1']);
+                // in screenshots and logos from bleeding. The AVIF coder reads
+                // this define; it ignores setSamplingFactors().
+                $im->setOption('heic:chroma', '444');
             }
 
             if (!$im->writeImage($outputFile)) {
@@ -99,6 +114,18 @@ final readonly class ImagickProcessor implements ProcessorInterface
             $im->clear();
             $im->destroy();
         }
+    }
+
+    /** Imagick::FILTER_* for the configured filter, or null to let Imagick choose. */
+    private function filter(): ?int
+    {
+        if ($this->config->resizeFilter === '') {
+            return null;
+        }
+
+        $name = Imagick::class . '::FILTER_' . strtoupper($this->config->resizeFilter);
+
+        return defined($name) ? (int) constant($name) : null;
     }
 
     /** True when the image carries a non-opaque alpha channel. */

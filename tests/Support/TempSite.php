@@ -76,6 +76,21 @@ final class TempSite
         return $relative;
     }
 
+    /**
+     * Create an RGBA PNG whose every pixel is opaque — the shape of a
+     * ProcessWire variation, which always carries an alpha channel.
+     */
+    public function pngOpaqueAlpha(string $relative, int $width, int $height): string
+    {
+        $path = $this->path($relative);
+        $image = $this->canvas($width, $height);
+        imagealphablending($image, false);
+        imagesavealpha($image, true);
+        imagepng($image, $path);
+
+        return $relative;
+    }
+
     public function absolute(string $relative): string
     {
         return $this->root . '/files/' . ltrim($relative, '/');

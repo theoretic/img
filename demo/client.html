@@ -35,6 +35,9 @@
 		padding:2px 7px; border-radius:4px; display:inline-block; margin-top:8px; }
 	.verdict.ok { background:#143d28; color:var(--ok); }
 	.verdict.bad { background:#401c1c; color:var(--bad); }
+	/* The qr-peek card: opens from scale:0, measured a frame into it (.1). */
+	.frame.pop { transition:scale .6s ease-out; transform-origin:top left; }
+	.frame.pop.closed { scale:.1; }
 </style>
 </head>
 <body>
@@ -42,9 +45,10 @@
 <h1>adaptive-media → img-pipeline, end to end</h1>
 <p class="lede">
 	The real <code>@atispro/core</code> build driving the real endpoint. Each tile is a placeholder of a
-	declared size; the engine measures it and picks the URL. Two things have to hold: every request lands
-	on a ladder rung — <b>a redirect means the two ladders have drifted apart</b> — and a cover-styled box
-	is filled rather than under-served.
+	declared size; the engine measures it and picks the URL. Three things have to hold: every request lands
+	on a ladder rung — <b>a redirect means the two ladders have drifted apart</b> — a box is filled rather
+	than under-served, width-only included, and an AVIF comes back 4:4:4 without an alpha plane its source
+	never needed.
 </p>
 
 <div class="bar">
@@ -64,6 +68,9 @@ window.CoreConfig = { adaptiveMedia: { rootMargin: '0px' } }
 <script>
 // mars.jpg is 3392x2024 (landscape), parrot.jpeg 700x893 (portrait, small),
 // pano.jpg 2400x400 (6:1), tower.jpg 400x1600 (1:4).
+// pop: the frame opens from scale .1 only after the engine has picked, which
+// is when the qr-peek card got measured. opaque: the source has an alpha
+// channel with nothing in it, so the AVIF must carry no alpha plane.
 const CASES = [
 	{ label: 'cover, tall box vs landscape source', src: '/img/mars.jpg',    w: 380, h: 800, fit: 'cover' },
 	{ label: 'cover, wide box vs portrait source',  src: '/img/tower.jpg',   w: 900, h: 300, fit: 'cover' },
@@ -75,9 +82,15 @@ const CASES = [
 	{ label: 'data-back defaults to cover',         src: '/img/mars.jpg',    w: 380, h: 300, back: true },
 	{ label: 'odd box size snaps to a rung',        src: '/img/mars.jpg',    w: 437, h: 611, fit: 'cover' },
 	{ label: 'tiny box',                            src: '/img/parrot.jpeg', w: 60,  h: 40,  fit: 'cover' },
+	{ label: 'scale-in card (qr-peek)',             src: '/img/opaque.png',  w: 380, h: 238, fit: 'width', pop: true, opaque: true },
+	{ label: 'opaque RGBA source (a PW variation)', src: '/img/opaque.png',  w: 380, h: 238, fit: 'width', opaque: true },
+	{ label: 'fine red detail, small',              src: '/img/chroma.png',  w: 150, h: 94,  fit: 'width', opaque: true },
 ]
 
-const LADDER = [200,300,400,600,800,1000,1200,1600,2000,2400,3000]
+// Must match core's DEFAULTS.sizes and dprCap. The page leaves both to the
+// engine, so a drift in either shows up here rather than in production.
+const LADDER = [200,300,400,450,600,800,1000,1200,1600,2000,2400,3000]
+const DPR_CAP = 2
 const grid = document.getElementById('grid')
 let ok = 0, bad = 0, redirects = 0
 
@@ -94,6 +107,7 @@ for (const c of CASES) {
 	grid.append(card)
 
 	const frame = card.querySelector('.frame')
+	if (c.pop) frame.classList.add('pop', 'closed')
 	if (c.back) {
 		frame.dataset.back = c.src
 		frame.style.backgroundSize = 'cover'
@@ -124,9 +138,41 @@ const settle = (card, pass, detail) => {
 	document.getElementById('redirects').textContent = redirects
 }
 
+// Every av1C box in an AVIF, one per coded item; the alpha plane is its own
+// monochrome item. After the box type: marker/version, profile(3)|level(5),
+// then tier, high_bitdepth, twelve_bit, monochrome, subsampling x, subsampling y.
+const av1c = bytes => {
+	const out = []
+	for (let i = 0; i + 7 < bytes.length; i++) {
+		if (bytes[i] !== 0x61 || bytes[i + 1] !== 0x76 || bytes[i + 2] !== 0x31 || bytes[i + 3] !== 0x43) continue
+		const flags = bytes[i + 6]
+		out.push({ profile: bytes[i + 5] >> 5, mono: !!(flags >> 4 & 1), sub: [flags >> 3 & 1, flags >> 2 & 1] })
+	}
+	return out
+}
+
+// Open each pop frame once the engine has given its img a URL: that pick was
+// made at scale .1, which is the moment the qr-peek card used to be measured.
+// Nothing about the img's own box changes as it opens, so a rect-based pick
+// stays wrong for good.
+const openPops = () => Promise.all([...grid.children].filter(card => card.__case.pop).map(async card => {
+	const frame = card.querySelector('.frame')
+	const img = frame.querySelector('img')
+	for (let t = 0; t < 60 && !img.getAttribute('src'); t++) await new Promise(r => setTimeout(r, 50))
+	frame.classList.remove('closed')
+	await new Promise(r => setTimeout(r, 800))
+}))
+
 window.addEventListener('load', async () => {
+	// Every tile is applied explicitly, as in core's own demo: left to the
+	// IntersectionObserver, a tile below the fold (or any tile, in a hidden or
+	// background tab) is never requested, and the page would be scoring the
+	// viewport rather than the engine. The pop frames are still closed here.
+	await window.imageFormatReady
+	for (const el of grid.querySelectorAll('[data-src], [data-back]')) window.adaptiveMedia.apply(el)
 	// Let the engine measure and assign.
 	await new Promise(r => setTimeout(r, 400))
+	await openPops()
 
 	for (const card of grid.children) {
 		const c = card.__case
@@ -163,9 +209,11 @@ window.addEventListener('load', async () => {
 
 		// Measure the box the engine actually saw, not the one declared in CSS:
 		// layout and any pane zoom get a vote, and the engine is right to follow
-		// them.
-		const rect = frame.getBoundingClientRect()
-		const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+		// them. Except a pop frame, whose rect is the transient the engine must
+		// NOT follow: it is judged at the size it is shown at once open, which is
+		// its layout box (a hidden pane never even runs the transition).
+		const rect = c.pop ? { width: frame.offsetWidth, height: frame.offsetHeight } : frame.getBoundingClientRect()
+		const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP)
 		const needW = Math.round(rect.width * dpr)
 		const needH = Math.round(rect.height * dpr)
 		card.querySelector('.box').textContent =
@@ -182,6 +230,23 @@ window.addEventListener('load', async () => {
 			if (bmp.width < needW - 1 || bmp.height < needH - 1) {
 				problems.push(`does not cover ${needW}x${needH}`)
 			}
+		}
+		// Width-only: the box's width is all that is promised, and a pick made
+		// while the box was mis-measured (mid-animation) breaks exactly that.
+		if (c.fit === 'width' && !sourceLimited && bmp.width < needW - 1) {
+			problems.push(`${bmp.width}px wide for a box that needs ${needW}`)
+		}
+
+		if (url.endsWith('.avif') && !res.redirected) {
+			const items  = av1c(new Uint8Array(await blob.arrayBuffer()))
+			const colour = items.find(b => !b.mono)
+			const alpha  = items.some(b => b.mono)
+			const [ sx, sy ] = colour ? colour.sub : [ 1, 1 ]
+			const chroma = sx && sy ? '4:2:0' : sx ? '4:2:2' : '4:4:4'
+			card.querySelector('.got').textContent += `, ${chroma}${alpha ? ', alpha plane' : ''}`
+			if (!colour) problems.push('no colour av1C box')
+			else if (chroma !== '4:4:4') problems.push(`chroma ${chroma}, expected 4:4:4`)
+			if (c.opaque && alpha) problems.push('an alpha plane for an opaque source')
 		}
 
 		settle(

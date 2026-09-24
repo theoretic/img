@@ -8,6 +8,12 @@ class Imagick
 {
     public const INTERLACE_PLANE = 2;
 
+    public const FILTER_LANCZOS = 22;
+
+    // The extension takes this from the ImageMagick it links: 9 on 7.x, 4 on
+    // 6.x. Only the name matters to analysis.
+    public const ALPHACHANNEL_OFF = 9;
+
     // MagickCore order: Undefined, Area, Disk, File, Map, Memory, Thread,
     // Throttle, Time. Wrong values here would set the disk and thread limits
     // instead of map, memory and time.
@@ -27,6 +33,8 @@ class Imagick
     public function stripImage(): bool {}
 
     public function thumbnailImage(int $columns, int $rows, bool $bestfit = false, bool $fill = false): bool {}
+
+    public function resizeImage(int $columns, int $rows, int $filter, float $blur, bool $bestfit = false, bool $legacy = false): bool {}
 
     public function cropImage(int $width, int $height, int $x, int $y): bool {}
 
@@ -60,6 +68,8 @@ class Imagick
     public function setSamplingFactors(array $factors): bool {}
 
     public function getImageAlphaChannel(): bool {}
+
+    public function setImageAlphaChannel(int $alphachannel): bool {}
 
     public function getImageProperty(string $name): string {}
 
