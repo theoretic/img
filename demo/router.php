@@ -12,6 +12,13 @@ declare(strict_types=1);
 
 $path = (string) parse_url((string) $_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
+// /slow/img/… is the loading-state demo's slow network. sw.js holds those
+// requests in the browser; reaching here means no service worker ran, so it is
+// served at full speed from /img/….
+if (str_starts_with($path, '/slow/img/')) {
+    $path = substr($path, strlen('/slow'));
+}
+
 // Serve the real @atispro/core build, so client.html exercises the shipped
 // engine rather than a copy of it.
 if (str_starts_with($path, '/core/')) {
