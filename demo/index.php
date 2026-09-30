@@ -337,10 +337,11 @@ foreach ($sources as $name => [$w, $h]) {
 	.src div { font-size: 12px; color: var(--dim); }
 
 	/* Loading previews: the CSS a site pairs with Gradient::css(). Soft corner glows
-	   over the four colours' oklab mean, painted as the box's own background. */
+	   over the four colours' oklab mean, painted as the img's own background until
+	   @atispro/core marks its first file in (data-shown), as on atispro.pro. */
 	.lq-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); }
 	.lq { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
-	.lq-box, .lq-mini {
+	.lq-box img[style*="--lqip"]:not([data-shown]), .lq-mini {
 		background-color: color-mix(in oklab, color-mix(in oklab, var(--lqip-tl), var(--lqip-tr)), color-mix(in oklab, var(--lqip-bl), var(--lqip-br)));
 		background-image:
 			radial-gradient(at 0 0, var(--lqip-tl), transparent 70%),
@@ -348,9 +349,24 @@ foreach ($sources as $name => [$w, $h]) {
 			radial-gradient(at 0 100%, var(--lqip-bl), transparent 70%),
 			radial-gradient(at 100% 100%, var(--lqip-br), transparent 70%);
 	}
-	.lq-box { aspect-ratio: 8 / 5; position: relative; }
+	.lq-box { aspect-ratio: 8 / 5; position: relative;
+		background: repeating-conic-gradient(#20232d 0 25%, #191c24 0 50%) 0 0 / 18px 18px; }
 	.lq-box img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
-	.lq-box img[hidden] { display: none; }
+	.lq-state { position: absolute; right: 8px; bottom: 8px; z-index: 1; font-size: 11px; font-weight: 600;
+		letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px;
+		background: #000a; color: var(--dim); pointer-events: none; }
+	.lq-state.shown { color: var(--ok); } .lq-state.error { color: var(--bad); }
+
+	/* Broken image: @atispro/core sets data-error and takes the failed src off; this is
+	   the site's half, mantra-kit's rule (css/_core/adaptive-media.css): a picture icon
+	   and the alt drawn on the img's own box. Chrome and Firefox allow generated content
+	   on a src-less <img>; Safari does not and shows its native alt instead. */
+	.lq-box:not(.plain) img[data-error] { display: grid; place-content: center; gap: 10px; padding: 16px;
+		visibility: hidden; color: var(--dim); font-size: 12.5px; line-height: 1.35; text-align: center; }
+	.lq-box:not(.plain) img[data-error]::before { content: ""; width: 32px; height: 32px; margin: 0 auto; background: currentColor;
+		mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round'><rect x='3' y='4' width='18' height='16'/><circle cx='9' cy='9.5' r='1.75'/><path d='M3 17.5l5-5 4 4 3-3 6 6'/></svg>") center / contain no-repeat; }
+	.lq-box:not(.plain) img[data-error]::after { content: attr(alt); }
+	.lq-box:not(.plain) img[data-error]::before, .lq-box:not(.plain) img[data-error]::after { visibility: visible; }
 	.lq .meta { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
 	.lq-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 	.lq-mini { aspect-ratio: 8 / 5; border-radius: 5px; }
@@ -509,25 +525,16 @@ foreach ($sources as $name => [$w, $h]) {
 		(<code>Gradient::css()</code>, ~76 bytes) and draws the gradient in CSS, so it looks the same in
 		every browser and says nothing about the picture. A tiny image does neither: Chrome paints a
 		2×2 background flat, and a 16px one reads as a broken copy. Transparent pixels are weighted
-		out of the average, so <code>logo.png</code> previews as its own colour. <b>Replay loading</b> hides the
-		images for 1–3 s and runs the pulse <code>@atispro/core</code> adaptive-media runs while a first file
-		loads (opacity 100% → 50% → 100%, 1 s, <code>pulse</code> option), then the same 200 ms handover
-		from wherever the cycle is. Sampling times are for this backend, uncached; a site samples once,
-		at upload.
+		out of the average, so <code>logo.png</code> previews as its own colour. Sampling times are for
+		this backend, uncached; a site samples once, at upload.
 	</p>
 	<?php if ($previewError !== null): ?>
 	<p class="why">Sampling failed: <?= htmlspecialchars($previewError) ?></p>
 	<?php else: ?>
-	<div class="lq-controls">
-		<button type="button" id="lq-replay">replay loading</button>
-		<span class="note" id="lq-note">Uses the Web Animations API; still under prefers-reduced-motion, as in the engine.</span>
-	</div>
 	<div class="lq-grid">
 		<?php foreach ($previews as $name => $p): ?>
 		<div class="lq">
-			<div class="lq-box" style="<?= $p['css']->css() ?>">
-				<img src="/img/600x/<?= htmlspecialchars($name) ?>" alt="">
-			</div>
+			<div class="lq-box" data-lq="<?= htmlspecialchars(json_encode(['src' => '/slow/img/' . $name, 'style' => $p['css']->css(), 'alt' => $name], JSON_THROW_ON_ERROR)) ?>"></div>
 			<div class="meta">
 				<div class="url"><?= htmlspecialchars($name) ?> · <?= $p['w'] ?> × <?= $p['h'] ?> · sampled in <?= number_format($p['ms'], 0) ?> ms</div>
 				<div class="lq-pair">
@@ -541,6 +548,52 @@ foreach ($sources as $name => [$w, $h]) {
 		<?php endforeach; ?>
 	</div>
 	<?php endif; ?>
+</section>
+
+<section>
+	<h2>Image loading state</h2>
+	<p class="blurb">
+		The previews above are driven by the real <code>@atispro/core</code> adaptive-media, over a slow
+		network: <code>sw.js</code>, a service worker, holds every <code>/slow/img/…</code> request 1.5–4 s in
+		the browser, so the server stays fast for the case matrix. While a first file loads, the img shows
+		the gradient and pulses (opacity 100% → 50% → 100%, 1 s, the engine's <code>pulse</code> option);
+		when it lands the engine sets <code>data-shown</code>, the gradient goes, and the pulse eases back to
+		full opacity in 200 ms from wherever the cycle is. Off under prefers-reduced-motion. The badge on
+		each card reads the element's state. A first visit may load at full speed, before the service
+		worker takes control: <b>replay loading</b> re-creates the images with a cache-busting
+		<code>data-cb</code>, so every file is fetched, slowly, again.
+	</p>
+	<div class="lq-controls">
+		<button type="button" id="lq-replay">replay loading</button>
+		<span class="note" id="lq-note"></span>
+	</div>
+</section>
+
+<section>
+	<h2>Broken image</h2>
+	<p class="blurb">
+		A source that does not exist: the endpoint answers 404 and the img's <code>error</code> event fires.
+		When a <b>first</b> file fails, the engine takes the failed URL off the img (and off its
+		<code>&lt;picture&gt;</code> sources) and sets <code>data-error</code>: with no <code>src</code> the browser
+		draws no broken-image glyph, and the site's CSS draws a picture icon and the alt on the img's own
+		box, here the rule from mantra-kit. A failed <b>re-pick</b> (a larger rung after a resize) goes back
+		to the file that already worked and shows nothing; a URL that failed is never asked for again.
+	</p>
+	<div class="lq-grid">
+		<div class="lq">
+			<div class="lq-box" data-lq="<?= htmlspecialchars(json_encode(['src' => '/img/no-such-photo.jpg', 'alt' => 'The photograph that is not there'], JSON_THROW_ON_ERROR)) ?>"></div>
+			<div class="meta"><div class="url">/img/no-such-photo.jpg</div><div class="note">data-error and the site's CSS: icon and alt, no broken glyph.</div></div>
+		</div>
+		<?php $mars = isset($previews['mars.jpg']) ? $previews['mars.jpg']['css']->css() : ''; ?>
+		<div class="lq">
+			<div class="lq-box" data-lq="<?= htmlspecialchars(json_encode(['src' => '/slow/img/no-such-photo.jpg', 'style' => $mars, 'alt' => 'The photograph that is not there'], JSON_THROW_ON_ERROR)) ?>"></div>
+			<div class="meta"><div class="url">/slow/img/no-such-photo.jpg</div><div class="note">Slow and missing, with a placeholder (mars.jpg's colours): it pulses while the request is out, then turns into the error state.</div></div>
+		</div>
+		<div class="lq">
+			<div class="lq-box plain" data-lq="<?= htmlspecialchars(json_encode(['src' => '/img/no-such-photo.jpg', 'alt' => 'The photograph that is not there'], JSON_THROW_ON_ERROR)) ?>"></div>
+			<div class="meta"><div class="url">/img/no-such-photo.jpg</div><div class="note">The same data-error without the site's CSS: only what the browser does with a src-less img. This is why a site pairs the state with a rule.</div></div>
+		</div>
+	</div>
 </section>
 
 <section>
@@ -709,29 +762,69 @@ async function runCase(card) {
 })()
 
 paint()
+</script>
 
-// Loading previews: the engine's pulse and handover, replayed on demand. Same
-// keyframes and timings as adaptive-media's pulseStart()/pulseStop().
-const replay = document.getElementById('lq-replay')
-if (replay) replay.addEventListener('click', () => {
-	const still = matchMedia('(prefers-reduced-motion: reduce)').matches
-	for (const box of document.querySelectorAll('.lq-box')) {
-		const img = box.querySelector('img')
-		box.getAnimations().forEach(a => a.cancel())
-		img.hidden = true
-		const pulse = still ? null : box.animate(
-			[ { opacity: 1 }, { opacity: .5 }, { opacity: 1 } ],
-			{ duration: 1000, iterations: Infinity, easing: 'ease-in-out' },
-		)
-		setTimeout(() => {
-			img.hidden = false
-			if (!pulse) return
-			const from = getComputedStyle(box).opacity
-			pulse.cancel()
-			box.animate([ { opacity: from }, { opacity: 1 } ], { duration: 200, easing: 'ease-out' })
-		}, 1000 + Math.random() * 2000)
+<!-- The loading-state and broken-image cards run on the real engine, served from
+     frontend/js/_core/src by router.php, configured as atispro.pro configures it. -->
+<script>window.CoreConfig = { adaptiveMedia: { pulse: '[style*="--lqip"]' } }</script>
+<script src="/core/00-image-format.js"></script>
+<script src="/core/adaptive-media.js"></script>
+<script>
+;(() => {
+	const boxes = [...document.querySelectorAll('.lq-box[data-lq]')]
+	const note = document.getElementById('lq-note')
+
+	// The badge reads the element, not the script's idea of it: loading is the
+	// engine's class, shown its data-shown, error its data-error.
+	const badge = (box, img) => {
+		//a replaced img's late events must not write over its successor's badge
+		if (img.parentElement !== box) return
+		const b = box.querySelector('.lq-state')
+		const state = img.hasAttribute('data-error') ? 'error'
+			: img.hasAttribute('data-shown') ? 'shown'
+			: img.classList.contains('loading') ? 'loading'
+			: 'waiting'
+		b.textContent = state
+		b.className = 'lq-state ' + state
 	}
-})
+
+	// A fresh element each time, so the engine registers it anew and treats the
+	// next file as a first one (pulse included). data-cb busts the browser cache.
+	const build = (box, cb) => {
+		const d = JSON.parse(box.dataset.lq)
+		const img = document.createElement('img')
+		img.dataset.src = d.src
+		if (cb) img.dataset.cb = cb
+		if (d.style) img.setAttribute('style', d.style)
+		img.alt = d.alt
+		const b = document.createElement('span')
+		b.className = 'lq-state'
+		box.replaceChildren(b, img)
+		badge(box, img)
+		new MutationObserver(() => badge(box, img)).observe(img, { attributes: true, attributeFilter: [ 'class', 'data-shown', 'data-error', 'src' ] })
+		img.addEventListener('load', () => badge(box, img))
+		img.addEventListener('error', () => badge(box, img))
+	}
+
+	const buildAll = cb => boxes.forEach(box => build(box, cb))
+
+	document.getElementById('lq-replay')?.addEventListener('click', () => buildAll(String(Date.now())))
+
+	// Build once the service worker controls the page, so the first load is slow
+	// too; a browser without one, or a registration that fails, gets it at full speed.
+	const ready = 'serviceWorker' in navigator
+		? navigator.serviceWorker.register('/sw.js').then(() => navigator.serviceWorker.controller || new Promise(r => {
+			navigator.serviceWorker.addEventListener('controllerchange', r, { once: true })
+			setTimeout(r, 1500)
+		})).then(() => !!navigator.serviceWorker.controller).catch(() => false)
+		: Promise.resolve(false)
+	ready.then(slow => {
+		note.textContent = slow
+			? 'Slow network on: every /slow/img/ request waits 1.5–4 s in the service worker.'
+			: 'No service worker here, so images load at full speed; the states still show, briefly.'
+		buildAll('')
+	})
+})()
 </script>
 </body>
 </html>
