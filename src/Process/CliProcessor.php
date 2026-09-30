@@ -17,7 +17,7 @@ use Atispro\Img\Request\ImageRequest;
  * sees them. Geometry comes from {@see EncodePlan}, so this and the imagick
  * backend produce the same pixels for the same URL.
  */
-final readonly class CliProcessor implements ProcessorInterface
+final readonly class CliProcessor implements ProcessorInterface, CornerSampler
 {
     /** Source formats that can carry an alpha channel, and so are worth probing. */
     private const ALPHA_SOURCES = ['png', 'webp', 'gif', 'avif', 'heic', 'heif', 'tif', 'tiff'];
@@ -133,6 +133,51 @@ final readonly class CliProcessor implements ProcessorInterface
                 trim($result['err']) !== '' ? trim($result['err']) : trim($result['out']),
             ));
         }
+    }
+
+    public function corners(string $srcFile): array
+    {
+        $bin = Capabilities::cliBinary($this->config);
+        if ($bin === null) {
+            throw new BackendException('no runnable ImageMagick binary');
+        }
+
+        $args = [$bin];
+        foreach ($this->config->limits as $name => $value) {
+            array_push($args, '-limit', $name, $value);
+        }
+        // [0]: the first frame of an animation. Box: each corner is the plain
+        // average of its quadrant. Alpha goes after the resize, which has
+        // already weighted transparent pixels out.
+        array_push($args, $srcFile . '[0]', '-auto-orient', '-filter', 'Box', '-resize', '2x2!', '-alpha', 'off', '-depth', '8', 'txt:-');
+
+        $result = Capabilities::run($args);
+        if ($result['rc'] !== 0) {
+            throw new ProcessException(sprintf(
+                'convert exited %d sampling %s: %s',
+                $result['rc'],
+                $srcFile,
+                trim($result['err']) !== '' ? trim($result['err']) : trim($result['out']),
+            ));
+        }
+
+        // "0,0: (29298,47802,63222)  #72BAF6  srgb(114,186,246)"
+        preg_match_all('/^(\d),(\d):.*?#([0-9A-Fa-f]{6})/m', $result['out'], $m, PREG_SET_ORDER);
+        $byPosition = [];
+        foreach ($m as [, $x, $y, $hex]) {
+            $byPosition["{$x},{$y}"] = [hexdec(substr($hex, 0, 2)), hexdec(substr($hex, 2, 2)), hexdec(substr($hex, 4, 2))];
+        }
+
+        $corners = [];
+        foreach (['0,0', '1,0', '0,1', '1,1'] as $position) {
+            if (!isset($byPosition[$position])) {
+                throw new ProcessException("unexpected ImageMagick output sampling {$srcFile}: " . trim($result['out']));
+            }
+            $corners[] = array_map('intval', $byPosition[$position]);
+        }
+
+        /** @var array{0:array{int,int,int},1:array{int,int,int},2:array{int,int,int},3:array{int,int,int}} $corners */
+        return $corners;
     }
 
     /**

@@ -16,7 +16,7 @@ use Imagick;
  * Geometry comes from {@see EncodePlan} rather than being worked out here, so
  * this and the CLI backend cannot drift apart.
  */
-final readonly class ImagickProcessor implements ProcessorInterface
+final readonly class ImagickProcessor implements ProcessorInterface, CornerSampler
 {
     public function __construct(private Config $config)
     {
@@ -110,6 +110,40 @@ final readonly class ImagickProcessor implements ProcessorInterface
             throw new BackendException("imagick build is unusable: {$e->getMessage()}", 0, $e);
         } catch (\Throwable $e) {
             throw new ProcessException("imagick failed on {$request->srcFile}: {$e->getMessage()}", 0, $e);
+        } finally {
+            $im->clear();
+            $im->destroy();
+        }
+    }
+
+    public function corners(string $srcFile): array
+    {
+        $this->applyLimits();
+
+        try {
+            // [0]: the first frame of an animation, not every frame decoded
+            $im = new Imagick($srcFile . '[0]');
+        } catch (\Throwable $e) {
+            throw new ProcessException("imagick could not open {$srcFile}: {$e->getMessage()}", 0, $e);
+        }
+
+        try {
+            $im->autoOrientImage();
+            // box: each corner is the plain average of its quadrant
+            $im->resizeImage(2, 2, Imagick::FILTER_BOX, 1.0);
+
+            $corners = [];
+            foreach ([[0, 0], [1, 0], [0, 1], [1, 1]] as [$x, $y]) {
+                $c = $im->getImagePixelColor($x, $y)->getColor();
+                $corners[] = [(int) $c['r'], (int) $c['g'], (int) $c['b']];
+            }
+
+            /** @var array{0:array{int,int,int},1:array{int,int,int},2:array{int,int,int},3:array{int,int,int}} $corners */
+            return $corners;
+        } catch (\Error $e) {
+            throw new BackendException("imagick build is unusable: {$e->getMessage()}", 0, $e);
+        } catch (\Throwable $e) {
+            throw new ProcessException("imagick failed to sample {$srcFile}: {$e->getMessage()}", 0, $e);
         } finally {
             $im->clear();
             $im->destroy();

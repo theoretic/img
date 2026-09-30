@@ -13,7 +13,8 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
     }
 }
 
-const USAGE = "usage: atispro-img <clear|diff-legacy|capabilities> [--dry-run] [--limit=N] [--config path]\n";
+const USAGE = "usage: atispro-img <clear|diff-legacy|capabilities> [--dry-run] [--limit=N] [--config path]\n"
+    . "       atispro-img lqip <file>... [--contrast=K] [--config path]\n";
 
 $arguments = array_values(array_slice($argv, 1));
 $command = '';
@@ -45,7 +46,7 @@ for ($i = 0, $count = count($arguments); $i < $count; $i++) {
         continue;
     }
 
-    if ($argument === '--dry-run' || str_starts_with($argument, '--limit=') || str_starts_with($argument, '--fail-on=')) {
+    if ($argument === '--dry-run' || str_starts_with($argument, '--limit=') || str_starts_with($argument, '--fail-on=') || str_starts_with($argument, '--contrast=')) {
         $rest[] = $argument;
         continue;
     }
@@ -57,6 +58,12 @@ for ($i = 0, $count = count($arguments); $i < $count; $i++) {
 
     if ($command === '') {
         $command = $argument;
+        continue;
+    }
+
+    // lqip takes the files to sample; every other command takes none
+    if ($command === 'lqip') {
+        $rest[] = $argument;
         continue;
     }
 

@@ -135,6 +135,26 @@ vendor/bin/atispro-img capabilities
 
 Both backends consume one filter definition, which carries an `imagick` call and a `cli` argv fragment side by side, so they cannot drift apart. Where they cannot help but differ — some builds silently flatten alpha when writing AVIF — the CLI backend detects it at probe time and writes WebP into the same file instead. `Content-Type` comes from the file's magic bytes rather than its extension, so that substitution is invisible to the browser.
 
+## Loading previews
+
+`Atispro\Img\Preview\Gradient` gives a page something to paint while an image loads: four corner colours, from which the site's CSS draws a soft gradient. It says nothing about the picture's content by design.
+
+```php
+$gradient = Gradient::fromFile($srcFile, $config);   // configured backend, first frame, auto-oriented
+echo '<img … style="' . $gradient->css() . '">';     // --lqip-tl:#…;--lqip-tr:#…;--lqip-bl:#…;--lqip-br:#…
+file_put_contents($cache, $gradient->toString());    // "#rrggbb ×4", read back with Gradient::fromString()
+```
+
+The source is box-filtered to 2×2, so each corner is the plain average of its quadrant. Each corner is then pushed `CONTRAST` (1.6) times further from the four's mean: quadrant averages of a web page screenshot are nearly equal, and the raw corners read as flat. Both backends implement `CornerSampler` and give the same colours for the same file.
+
+Four colours, not a tiny image. A 16px copy, blurred, looks like a broken version of the picture. At 2×2 to 4×4 the browser's upscaling decides what you see: Chrome paints a 2×2 background as one flat colour and a 2×2 `<img>` with a seam, and 3×3 and 4×4 backgrounds lose contrast depending on the scale. Custom properties render the same everywhere and need no decode and no blur filter, in about 76 bytes of markup.
+
+```bash
+vendor/bin/atispro-img lqip site/assets/files/1044/photo.jpg [--contrast=1.6]
+```
+
+Sampling decodes the whole original, so a site computes it once per image (at upload) and caches the result; it is not meant to run on every page render.
+
 ## Development
 
 ```bash
