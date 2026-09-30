@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Atispro\Img\Tests\Unit;
 
+use Atispro\Img\Process\Capabilities;
 use Atispro\Img\Tests\Support\TempSite;
 use PHPUnit\Framework\TestCase;
 
@@ -124,5 +125,37 @@ final class CliTest extends TestCase
         self::assertStringContainsString('clearing', $result['out']);
         self::assertTrue($this->site->exists('1044/photo.jpg'), 'the original survives');
         self::assertFalse($this->site->exists('1044/400x/photo.jpg'), 'the derivative goes');
+    }
+
+    public function testLqipPrintsOneLinePerFileAndFailsOnABadOne(): void
+    {
+        if (!Capabilities::hasCli($this->site->config()) && !Capabilities::hasImagick($this->site->config())) {
+            self::markTestSkipped('no image backend available on this host');
+        }
+
+        $good = $this->site->absolute($this->site->quadrants('1044/q.png', 40, 30, [[200, 40, 40], [40, 200, 40], [40, 40, 200], [240, 240, 240]]));
+        $bad = $this->site->root . '/files/missing.png';
+
+        $result = $this->cli(['lqip', $good, $bad, '--contrast=1', '--config', $this->configPath]);
+
+        self::assertSame(1, $result['code'], $result['out']);
+        self::assertStringContainsString("{$good}\t--lqip-tl:#c82828;--lqip-tr:#28c828;--lqip-bl:#2828c8;--lqip-br:#f0f0f0", $result['out']);
+        self::assertStringContainsString($bad, $result['out']);
+    }
+
+    public function testLqipWithoutFilesIsAnError(): void
+    {
+        $result = $this->cli(['lqip', '--config', $this->configPath]);
+
+        self::assertSame(1, $result['code']);
+        self::assertStringContainsString('needs at least one file', $result['out']);
+    }
+
+    public function testOtherCommandsStillRefuseStrayArguments(): void
+    {
+        $result = $this->cli(['clear', 'stray', '--config', $this->configPath]);
+
+        self::assertSame(1, $result['code']);
+        self::assertStringContainsString('unexpected argument', $result['out']);
     }
 }

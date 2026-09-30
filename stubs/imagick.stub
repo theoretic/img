@@ -8,6 +8,8 @@ class Imagick
 {
     public const INTERLACE_PLANE = 2;
 
+    public const FILTER_BOX = 2;
+
     public const FILTER_LANCZOS = 22;
 
     // The extension takes this from the ImageMagick it links: 9 on 7.x, 4 on
@@ -73,6 +75,8 @@ class Imagick
 
     public function getImageProperty(string $name): string {}
 
+    public function getImagePixelColor(int $x, int $y): ImagickPixel {}
+
     public function writeImage(?string $filename = null): bool {}
 
     public function clear(): bool {}
@@ -83,4 +87,10 @@ class Imagick
     public static function getQuantumRange(): array {}
 
     public static function setResourceLimit(int $type, int $limit): bool {}
+}
+
+class ImagickPixel
+{
+    /** @return array{r:int,g:int,b:int,a:int} */
+    public function getColor(int $normalized = 0): array {}
 }

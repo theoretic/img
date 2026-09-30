@@ -7,6 +7,8 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use Atispro\Img\Cache\Cleaner;
 use Atispro\Img\Config;
+use Atispro\Img\Exception\ImgException;
+use Atispro\Img\Preview\Gradient;
 use Atispro\Img\Process\Capabilities;
 
 $filesDir = __DIR__ . '/files';
@@ -240,6 +242,33 @@ $sections = [
 
 $totalCases = array_sum(array_map(static fn (array $s): int => count($s['cases']), $sections));
 
+// ------------------------------------------------------------ loading previews
+
+// Sampled on every page load, not cached: the point is to show what the
+// configured backend gives and what it costs. A site samples once, at upload.
+$previews = [];
+$previewError = null;
+foreach ($sources as $name => [$w, $h]) {
+    try {
+        $t = hrtime(true);
+        $raw = Gradient::fromFile($filesDir . '/' . $name, $config, 1.0);
+        $ms = (hrtime(true) - $t) / 1e6;
+        // contrast 1 keeps the sampled integers, so the default contrast can be
+        // applied to them without sampling again
+        $rgb = array_map(static fn (string $hex): array => array_map('hexdec', str_split(substr($hex, 1), 2)), $raw->colors);
+        $previews[$name] = [
+            'raw' => $raw,
+            'css' => Gradient::fromCorners($rgb),
+            'ms' => $ms,
+            'w' => $w,
+            'h' => $h,
+        ];
+    } catch (ImgException $e) {
+        $previewError = $e->getMessage();
+        break;
+    }
+}
+
 ?>
 <!doctype html>
 <html lang="en">
@@ -306,6 +335,32 @@ $totalCases = array_sum(array_map(static fn (array $s): int => count($s['cases']
 	.src { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 	.src b { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
 	.src div { font-size: 12px; color: var(--dim); }
+
+	/* Loading previews: the CSS a site pairs with Gradient::css(). Soft corner glows
+	   over the four colours' oklab mean, painted as the box's own background. */
+	.lq-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); }
+	.lq { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+	.lq-box, .lq-mini {
+		background-color: color-mix(in oklab, color-mix(in oklab, var(--lqip-tl), var(--lqip-tr)), color-mix(in oklab, var(--lqip-bl), var(--lqip-br)));
+		background-image:
+			radial-gradient(at 0 0, var(--lqip-tl), transparent 70%),
+			radial-gradient(at 100% 0, var(--lqip-tr), transparent 70%),
+			radial-gradient(at 0 100%, var(--lqip-bl), transparent 70%),
+			radial-gradient(at 100% 100%, var(--lqip-br), transparent 70%);
+	}
+	.lq-box { aspect-ratio: 8 / 5; position: relative; }
+	.lq-box img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+	.lq-box img[hidden] { display: none; }
+	.lq .meta { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+	.lq-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+	.lq-mini { aspect-ratio: 8 / 5; border-radius: 5px; }
+	.lq-pair .k { font-size: 11px; color: var(--dim); margin-top: 3px; }
+	.swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+	.swatches span { height: 18px; border-radius: 3px; border: 1px solid #0006; }
+	.lq-css { font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; color: #b9c0d4; word-break: break-all; }
+	.lq-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+	.lq-controls button { border: 1px solid var(--line); padding: 5px 11px; border-radius: 6px;
+		background: none; color: var(--accent); font: inherit; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -444,6 +499,49 @@ $totalCases = array_sum(array_map(static fn (array $s): int => count($s['cases']
 	</div>
 </section>
 <?php endforeach; ?>
+
+<section>
+	<h2>Loading previews</h2>
+	<p class="blurb">
+		<code>Preview\Gradient</code>: each source box-averaged to 2×2 by the backend above, and the four
+		corners pushed <?= Gradient::CONTRAST ?>× away from their mean, since the quadrants of most
+		images average out close to each other. The page gets four colours in custom properties
+		(<code>Gradient::css()</code>, ~76 bytes) and draws the gradient in CSS, so it looks the same in
+		every browser and says nothing about the picture. A tiny image does neither: Chrome paints a
+		2×2 background flat, and a 16px one reads as a broken copy. Transparent pixels are weighted
+		out of the average, so <code>logo.png</code> previews as its own colour. <b>Replay loading</b> hides the
+		images for 1–3 s and runs the pulse <code>@atispro/core</code> adaptive-media runs while a first file
+		loads (opacity 100% → 50% → 100%, 1 s, <code>pulse</code> option), then the same 200 ms handover
+		from wherever the cycle is. Sampling times are for this backend, uncached; a site samples once,
+		at upload.
+	</p>
+	<?php if ($previewError !== null): ?>
+	<p class="why">Sampling failed: <?= htmlspecialchars($previewError) ?></p>
+	<?php else: ?>
+	<div class="lq-controls">
+		<button type="button" id="lq-replay">replay loading</button>
+		<span class="note" id="lq-note">Uses the Web Animations API; still under prefers-reduced-motion, as in the engine.</span>
+	</div>
+	<div class="lq-grid">
+		<?php foreach ($previews as $name => $p): ?>
+		<div class="lq">
+			<div class="lq-box" style="<?= $p['css']->css() ?>">
+				<img src="/img/600x/<?= htmlspecialchars($name) ?>" alt="">
+			</div>
+			<div class="meta">
+				<div class="url"><?= htmlspecialchars($name) ?> · <?= $p['w'] ?> × <?= $p['h'] ?> · sampled in <?= number_format($p['ms'], 0) ?> ms</div>
+				<div class="lq-pair">
+					<div><div class="lq-mini" style="<?= $p['raw']->css() ?>"></div><div class="k">as sampled</div></div>
+					<div><div class="lq-mini" style="<?= $p['css']->css() ?>"></div><div class="k">× <?= Gradient::CONTRAST ?> (what the page gets)</div></div>
+				</div>
+				<div class="swatches"><?php foreach ($p['css']->colors as $color): ?><span style="background:<?= $color ?>" title="<?= $color ?>"></span><?php endforeach; ?></div>
+				<div class="lq-css"><?= htmlspecialchars($p['css']->css()) ?></div>
+			</div>
+		</div>
+		<?php endforeach; ?>
+	</div>
+	<?php endif; ?>
+</section>
 
 <section>
 	<h2>Not covered here</h2>
@@ -611,6 +709,29 @@ async function runCase(card) {
 })()
 
 paint()
+
+// Loading previews: the engine's pulse and handover, replayed on demand. Same
+// keyframes and timings as adaptive-media's pulseStart()/pulseStop().
+const replay = document.getElementById('lq-replay')
+if (replay) replay.addEventListener('click', () => {
+	const still = matchMedia('(prefers-reduced-motion: reduce)').matches
+	for (const box of document.querySelectorAll('.lq-box')) {
+		const img = box.querySelector('img')
+		box.getAnimations().forEach(a => a.cancel())
+		img.hidden = true
+		const pulse = still ? null : box.animate(
+			[ { opacity: 1 }, { opacity: .5 }, { opacity: 1 } ],
+			{ duration: 1000, iterations: Infinity, easing: 'ease-in-out' },
+		)
+		setTimeout(() => {
+			img.hidden = false
+			if (!pulse) return
+			const from = getComputedStyle(box).opacity
+			pulse.cancel()
+			box.animate([ { opacity: from }, { opacity: 1 } ], { duration: 200, easing: 'ease-out' })
+		}, 1000 + Math.random() * 2000)
+	}
+})
 </script>
 </body>
 </html>

@@ -7,6 +7,8 @@ namespace Atispro\Img\Cli;
 use Atispro\Img\Cache\Cleaner;
 use Atispro\Img\Config;
 use Atispro\Img\Exception\ConfigException;
+use Atispro\Img\Exception\ImgException;
+use Atispro\Img\Preview\Gradient;
 use Atispro\Img\Process\Capabilities;
 
 /**
@@ -37,6 +39,7 @@ final class Application
             'clear' => $this->clear($arguments),
             'diff-legacy' => $this->diffLegacy($arguments),
             'capabilities' => $this->capabilities(),
+            'lqip' => $this->lqip($arguments),
             default => $this->unknown($command),
         };
     }
@@ -106,6 +109,44 @@ final class Application
         }
 
         return 0;
+    }
+
+    /**
+     * One line per file: the path, a tab, and the custom properties
+     * {@see Gradient::css()} writes. A file that cannot be sampled is reported
+     * on stderr and fails the run, but does not stop the others.
+     *
+     * @param list<string> $arguments
+     */
+    private function lqip(array $arguments): int
+    {
+        $contrast = Gradient::CONTRAST;
+        $files = [];
+        foreach ($arguments as $argument) {
+            if (str_starts_with($argument, '--contrast=')) {
+                $contrast = (float) substr($argument, 11);
+            } elseif (!str_starts_with($argument, '--')) {
+                $files[] = $argument;
+            }
+        }
+
+        if ($files === []) {
+            fwrite(STDERR, "lqip needs at least one file\n");
+
+            return 1;
+        }
+
+        $failed = 0;
+        foreach ($files as $file) {
+            try {
+                echo $file, "\t", Gradient::fromFile($file, $this->config, $contrast)->css(), "\n";
+            } catch (ImgException $e) {
+                fwrite(STDERR, "{$file}: {$e->getMessage()}\n");
+                $failed++;
+            }
+        }
+
+        return $failed > 0 ? 1 : 0;
     }
 
     private function capabilities(): int

@@ -91,6 +91,29 @@ final class TempSite
         return $relative;
     }
 
+    /**
+     * Create a PNG of four flat quadrants, so a 2x2 box sample has exact answers.
+     *
+     * @param array{0:array{int,int,int},1:array{int,int,int},2:array{int,int,int},3:array{int,int,int}} $colors
+     *        top-left, top-right, bottom-left, bottom-right
+     */
+    public function quadrants(string $relative, int $width, int $height, array $colors): string
+    {
+        $path = $this->path($relative);
+        $image = imagecreatetruecolor($width, $height);
+        $halfW = intdiv($width, 2);
+        $halfH = intdiv($height, 2);
+
+        foreach ([[0, 0], [$halfW, 0], [0, $halfH], [$halfW, $halfH]] as $i => [$x, $y]) {
+            $colour = (int) imagecolorallocate($image, ...$colors[$i]);
+            imagefilledrectangle($image, $x, $y, $x + $halfW - 1, $y + $halfH - 1, $colour);
+        }
+
+        imagepng($image, $path);
+
+        return $relative;
+    }
+
     public function absolute(string $relative): string
     {
         return $this->root . '/files/' . ltrim($relative, '/');
