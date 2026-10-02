@@ -95,6 +95,12 @@ FileETag MTime Size
 	<FilesMatch "\.(jpe?g|png|webp|avif|gif)$">
 		# 7 days fresh, then revalidate via ETag / Last-Modified -> 304.
 		# Matches the max-age the PHP phase sets on first generation.
+		#
+		# `unset` first: a server that sends its own Cache-Control is not
+		# replaced by `set` in a child context, and both headers go out. A
+		# repeated field is read as a comma list and the first max-age wins,
+		# so a host defaulting to max-age=0 silently turned this rule off.
+		Header unset Cache-Control
 		Header set Cache-Control "public, max-age=604800, must-revalidate"
 		Header unset Pragma
 	</FilesMatch>
