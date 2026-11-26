@@ -34,6 +34,7 @@ final readonly class ImagickProcessor implements ProcessorInterface, CornerSampl
 
         try {
             $im->autoOrientImage();
+            self::toSrgb($im);
 
             // Asked before stripImage(), which discards the alpha information
             // the format decision depends on.
@@ -129,6 +130,7 @@ final readonly class ImagickProcessor implements ProcessorInterface, CornerSampl
 
         try {
             $im->autoOrientImage();
+            self::toSrgb($im);
             // box: each corner is the plain average of its quadrant
             $im->resizeImage(2, 2, Imagick::FILTER_BOX, 1.0);
 
@@ -147,6 +149,24 @@ final readonly class ImagickProcessor implements ProcessorInterface, CornerSampl
         } finally {
             $im->clear();
             $im->destroy();
+        }
+    }
+
+    /**
+     * Bring the pixels into sRGB before any resize, sharpen or encode.
+     *
+     * Print-prepared uploads arrive as CMYK JPEGs. Nothing downstream expects
+     * four ink channels: ImageMagick 6's adaptive sharpen turns the black
+     * channel into NaN/±1e303 garbage, and the image then comes out dithered,
+     * blue-tinted and with phantom white shapes. Converting first also makes
+     * the corner sampler read real RGB. Matches the CLI's `-colorspace sRGB`,
+     * which ignores the embedded ICC profile the same way. A no-op for a
+     * source that is already sRGB.
+     */
+    private static function toSrgb(Imagick $im): void
+    {
+        if ($im->getImageColorspace() !== Imagick::COLORSPACE_SRGB) {
+            $im->transformImageColorspace(Imagick::COLORSPACE_SRGB);
         }
     }
 

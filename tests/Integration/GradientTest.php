@@ -59,6 +59,37 @@ final class GradientTest extends TestCase
         }
     }
 
+    /**
+     * A CMYK source is sampled as RGB. The CLI's `txt:` output prints CMYK
+     * pixels as eight hex digits, and the parser used to read the first six
+     * of them as if they were RGB.
+     */
+    public function testACmykSourceIsSampledAsRgb(): void
+    {
+        $backends = $this->backends();
+        $relative = $this->site->cmykQuadrants('1044/print.jpg', 40, 30, self::QUADRANTS);
+        if ($relative === null) {
+            self::markTestSkipped('no backend can write a CMYK fixture');
+        }
+        $file = $this->site->absolute($relative);
+
+        foreach ($backends as $backend) {
+            $gradient = Gradient::fromFile($file, $this->site->config(['processor' => $backend]), 1.0);
+
+            foreach ($gradient->colors as $i => $hex) {
+                $actual = sscanf($hex, '#%02x%02x%02x');
+                foreach ((array) $actual as $c => $value) {
+                    self::assertEqualsWithDelta(
+                        self::QUADRANTS[$i][$c],
+                        $value,
+                        12,
+                        "{$backend}: corner {$i} is {$hex}",
+                    );
+                }
+            }
+        }
+    }
+
     public function testBackendsAgreeOnARealGradient(): void
     {
         $file = $this->site->absolute($this->site->jpeg('1044/photo.jpg', 300, 200));

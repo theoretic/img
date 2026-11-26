@@ -376,6 +376,57 @@ final class PipelineTest extends TestCase
         }
     }
 
+    /**
+     * A print-prepared CMYK JPEG comes out as sRGB, in the right colours.
+     *
+     * Two failures this guards. Without a conversion, a JPEG derivative stays a
+     * four-channel CMYK file — on every ImageMagick version. And on
+     * ImageMagick 6, -adaptive-sharpen on CMYK pixels wrecks the black
+     * channel, so a WebP came out dithered and blue-tinted; ImageMagick 7
+     * happens to survive that, which is why the colours are checked too.
+     */
+    public function testCmykSourceComesOutAsSrgb(): void
+    {
+        $colors = [[200, 120, 40], [40, 160, 200], [30, 30, 30], [240, 240, 240]];
+
+        foreach ($this->backends() as $backend) {
+            $site = new TempSite();
+
+            try {
+                if ($site->cmykQuadrants('1044/print.jpg', 400, 300, $colors) === null) {
+                    self::markTestSkipped('no backend can write a CMYK fixture');
+                }
+                $pipeline = new Pipeline($site->config(['processor' => $backend]));
+
+                $jpeg = $pipeline->handle('1044/200x/print.jpg');
+                $info = getimagesize((string) $jpeg->path);
+                self::assertNotFalse($info, "{$backend}: output is not a readable image");
+                self::assertSame(3, $info['channels'] ?? null, "{$backend}: the JPEG derivative is still CMYK");
+
+                $webp = $pipeline->handle('1044/200x/print.jpg.webp');
+                $image = imagecreatefromwebp((string) $webp->path);
+                self::assertNotFalse($image, "{$backend}: output is not a readable WebP");
+
+                // The middle of each quadrant, clear of the edges the resize and
+                // the sharpen are allowed to touch.
+                foreach ([[50, 37], [150, 37], [50, 112], [150, 112]] as $i => [$x, $y]) {
+                    $rgb = imagecolorat($image, $x, $y);
+                    $actual = [($rgb >> 16) & 0xFF, ($rgb >> 8) & 0xFF, $rgb & 0xFF];
+                    foreach ($actual as $c => $value) {
+                        self::assertEqualsWithDelta(
+                            $colors[$i][$c],
+                            $value,
+                            16,
+                            "{$backend}: quadrant {$i} is " . json_encode($actual) . ', expected ' . json_encode($colors[$i]),
+                        );
+                    }
+                }
+            } finally {
+                $site->destroy();
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /**

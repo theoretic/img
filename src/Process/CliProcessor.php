@@ -64,7 +64,9 @@ final readonly class CliProcessor implements ProcessorInterface, CornerSampler
         // real format — an extension does not always tell the truth. What makes
         // that safe is UrlGrammar refusing source names containing the frame
         // selector characters ImageMagick would otherwise interpret.
-        array_push($args, $request->srcFile, '-auto-orient', '-strip');
+        // -colorspace sRGB before anything touches the pixels: see
+        // ImagickProcessor::toSrgb(). A no-op for an sRGB source.
+        array_push($args, $request->srcFile, '-auto-orient', '-colorspace', 'sRGB', '-strip');
 
         if ($probed && !$sourceHasAlpha) {
             array_push($args, '-alpha', 'off');
@@ -148,8 +150,10 @@ final readonly class CliProcessor implements ProcessorInterface, CornerSampler
         }
         // [0]: the first frame of an animation. Box: each corner is the plain
         // average of its quadrant. Alpha goes after the resize, which has
-        // already weighted transparent pixels out.
-        array_push($args, $srcFile . '[0]', '-auto-orient', '-filter', 'Box', '-resize', '2x2!', '-alpha', 'off', '-depth', '8', 'txt:-');
+        // already weighted transparent pixels out. sRGB first: `txt:` prints a
+        // CMYK image as eight hex digits, of which the regex below would read
+        // the first six as if they were RGB.
+        array_push($args, $srcFile . '[0]', '-auto-orient', '-colorspace', 'sRGB', '-filter', 'Box', '-resize', '2x2!', '-alpha', 'off', '-depth', '8', 'txt:-');
 
         $result = Capabilities::run($args);
         if ($result['rc'] !== 0) {

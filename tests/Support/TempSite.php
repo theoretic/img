@@ -114,6 +114,45 @@ final class TempSite
         return $relative;
     }
 
+    /**
+     * Four flat quadrants, as {@see quadrants()}, saved as a CMYK JPEG: the
+     * shape of a print-prepared upload. GD cannot write CMYK, so this goes
+     * through whichever ImageMagick backend the host has; null when it has
+     * none.
+     *
+     * @param array{0:array{int,int,int},1:array{int,int,int},2:array{int,int,int},3:array{int,int,int}} $colors
+     */
+    public function cmykQuadrants(string $relative, int $width, int $height, array $colors): ?string
+    {
+        $png = $this->absolute($this->quadrants($relative . '.src.png', $width, $height, $colors));
+        $path = $this->path($relative);
+        $config = $this->config();
+
+        try {
+            if (Capabilities::hasCli($config)) {
+                Capabilities::run([(string) Capabilities::cliBinary($config), $png, '-colorspace', 'CMYK', '-quality', '95', 'jpg:' . $path]);
+            } elseif (Capabilities::hasImagick($config)) {
+                $im = new \Imagick($png);
+                $im->transformImageColorspace(\Imagick::COLORSPACE_CMYK);
+                $im->setImageFormat('jpeg');
+                $im->setImageCompressionQuality(95);
+                $im->writeImage($path);
+                $im->destroy();
+            } else {
+                return null;
+            }
+        } finally {
+            @unlink($png);
+        }
+
+        $info = @getimagesize($path);
+        if ($info === false || ($info['channels'] ?? null) !== 4) {
+            throw new \RuntimeException("could not write a CMYK JPEG fixture at {$relative}");
+        }
+
+        return $relative;
+    }
+
     public function absolute(string $relative): string
     {
         return $this->root . '/files/' . ltrim($relative, '/');
